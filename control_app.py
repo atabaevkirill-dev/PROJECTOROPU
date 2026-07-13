@@ -253,6 +253,53 @@ class PanTiltDevice:
     def delete_preset(self, preset_id: int):
         self.send_command(f"$8,{preset_id}#")
 
+    # --- Информация об устройстве ---
+    def get_firmware_type(self): return self.send_and_read("$I#")
+    def get_firmware_version(self): return self.send_and_read("$V#")
+    def get_power_info(self): return self.send_and_read("$D#")
+
+    # --- Режим управления (v≥1.18) ---
+    def get_control_mode_pan(self): return self.send_and_read("$E#")
+    def set_control_mode_pan(self, mode: int, precision: int):
+        self.send_command(f"$E,{mode},{precision}#")
+    def get_control_mode_tilt(self): return self.send_and_read("$G#")
+    def set_control_mode_tilt(self, mode: int, precision: int):
+        self.send_command(f"$G,{mode},{precision}#")
+
+    # --- Самодиагностика (v≥1.18) ---
+    def get_selfdiag_settings_pan(self): return self.send_and_read("$F#")
+    def set_selfdiag_settings_pan(self, auto: int, speed: float):
+        self.send_command(f"$F,{auto},{speed}#")
+    def get_selfdiag_settings_tilt(self): return self.send_and_read("$H#")
+    def set_selfdiag_settings_tilt(self, auto: int, speed: float):
+        self.send_command(f"$H,{auto},{speed}#")
+
+    # --- Настройки Pelco-D ---
+    def get_pelcod_settings(self): return self.send_and_read("$9#")
+    def set_pelcod_settings(self, port: int, addr: int, tilt_inverse: int):
+        self.send_command(f"$9,{port},{addr},{tilt_inverse}#")
+
+    # --- Настройки RS-485 (v≥1.18) ---
+    def get_rs485_settings(self): return self.send_and_read("$A#")
+    def set_rs485_settings(self, port: int, baudrate: int, mode: int):
+        self.send_command(f"$A,{port},{baudrate},{mode}#")
+
+    # --- Ошибки ---
+    def get_pan_errors(self): return self.send_and_read("$b#")
+    def get_tilt_errors(self): return self.send_and_read("$o#")
+
+    # --- Занятость ---
+    def get_pan_busy(self): return self.send_and_read("$e#")
+    def get_tilt_busy(self): return self.send_and_read("$r#")
+
+    # --- Сброс модуля (EEPROM!) ---
+    def reset_module(self, module_id: int):
+        self.send_command(f"$2,{module_id}#")
+
+    # --- Перезагрузка устройства ---
+    def reboot_device(self):
+        self.send_command("$3#")
+
 
 # ============================================================
 # Класс для управления RelayX3
@@ -1237,6 +1284,408 @@ class ControlApp(ctk.CTk):
         self._pt_action_btn(pre_inner, "Сохранить", self._pt_save_preset, width=80).pack(side="left", padx=(0, 4))
         self._pt_action_btn(pre_inner, "Перейти", self._pt_goto_preset, width=70).pack(side="left", padx=(0, 4))
         self._pt_action_btn(pre_inner, "Удалить", self._pt_delete_preset, width=65, color="#EF4444", hover="#DC2626").pack(side="left")
+
+        # ===== Section 7: Информация об устройстве =====
+        info_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        info_sec.pack(fill="x", padx=12, pady=(8, 6))
+        self._pt_section_label(info_sec, "Информация об устройстве")
+
+        info_card = ctk.CTkFrame(info_sec, fg_color="#262626", corner_radius=8)
+        info_card.pack(fill="x", pady=2)
+
+        self.pt_firmware_label = ctk.CTkLabel(info_card, text="Прошивка: --",
+                                               font=lbl_style, text_color="#E5E7EB")
+        self.pt_firmware_label.pack(anchor="w", padx=10, pady=(8, 2))
+
+        self.pt_fw_version_label = ctk.CTkLabel(info_card, text="Версия: --",
+                                                 font=lbl_style, text_color="#E5E7EB")
+        self.pt_fw_version_label.pack(anchor="w", padx=10, pady=(0, 2))
+
+        self.pt_power_label = ctk.CTkLabel(info_card, text="Ток/Мощность: --",
+                                           font=lbl_style, text_color="#E5E7EB")
+        self.pt_power_label.pack(anchor="w", padx=10, pady=(0, 8))
+
+        info_btns = ctk.CTkFrame(info_sec, fg_color="transparent")
+        info_btns.pack(fill="x", pady=(4, 0))
+        self._pt_action_btn(info_btns, "Прочитать всё", self._pt_read_device_info, width=120).pack(side="left")
+
+        # ===== Section 8: Режим управления (EEPROM!) =====
+        ctrl_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        ctrl_sec.pack(fill="x", padx=12, pady=(8, 6))
+        self._pt_section_label(ctrl_sec, "Режим управления  ⚠ EEPROM")
+
+        # Pan control mode
+        pan_ctrl_row = ctk.CTkFrame(ctrl_sec, fg_color="#262626", corner_radius=8)
+        pan_ctrl_row.pack(fill="x", pady=2)
+        ctk.CTkLabel(pan_ctrl_row, text="Pan:", font=lbl_style, text_color="#9CA3AF").pack(side="left", padx=(10, 6), pady=6)
+        self.pt_ctrl_pan_mode = ctk.CTkSegmentedButton(
+            pan_ctrl_row, values=["Стандарт", "Синхрон"],
+            font=lbl_style, height=28, corner_radius=6,
+            fg_color="#1A1A1A", selected_color="#3B82F6",
+            selected_hover_color="#2563EB")
+        self.pt_ctrl_pan_mode.set("Стандарт")
+        self.pt_ctrl_pan_mode.pack(side="left", padx=(0, 6), pady=6)
+        self.pt_ctrl_pan_prec = ctk.CTkCheckBox(
+            pan_ctrl_row, text="Повыш. дискр.", width=100,
+            font=lbl_style, fg_color="#3B82F6", hover_color="#2563EB")
+        self.pt_ctrl_pan_prec.pack(side="left", padx=(0, 4), pady=6)
+        self._pt_action_btn(pan_ctrl_row, "◀", self._pt_read_ctrl_pan, width=32, color="#555", hover="#666").pack(side="left", padx=(0, 2), pady=6)
+        self._pt_action_btn(pan_ctrl_row, "✓", self._pt_set_ctrl_pan, width=32).pack(side="left", padx=(0, 8), pady=6)
+
+        # Tilt control mode
+        tilt_ctrl_row = ctk.CTkFrame(ctrl_sec, fg_color="#262626", corner_radius=8)
+        tilt_ctrl_row.pack(fill="x", pady=2)
+        ctk.CTkLabel(tilt_ctrl_row, text="Tilt:", font=lbl_style, text_color="#9CA3AF").pack(side="left", padx=(10, 6), pady=6)
+        self.pt_ctrl_tilt_mode = ctk.CTkSegmentedButton(
+            tilt_ctrl_row, values=["Стандарт", "Синхрон"],
+            font=lbl_style, height=28, corner_radius=6,
+            fg_color="#1A1A1A", selected_color="#3B82F6",
+            selected_hover_color="#2563EB")
+        self.pt_ctrl_tilt_mode.set("Стандарт")
+        self.pt_ctrl_tilt_mode.pack(side="left", padx=(0, 6), pady=6)
+        self.pt_ctrl_tilt_prec = ctk.CTkCheckBox(
+            tilt_ctrl_row, text="Повыш. дискр.", width=100,
+            font=lbl_style, fg_color="#3B82F6", hover_color="#2563EB")
+        self.pt_ctrl_tilt_prec.pack(side="left", padx=(0, 4), pady=6)
+        self._pt_action_btn(tilt_ctrl_row, "◀", self._pt_read_ctrl_tilt, width=32, color="#555", hover="#666").pack(side="left", padx=(0, 2), pady=6)
+        self._pt_action_btn(tilt_ctrl_row, "✓", self._pt_set_ctrl_tilt, width=32).pack(side="left", padx=(0, 8), pady=6)
+
+        ctk.CTkLabel(ctrl_sec, text="⚠ Запись в EEPROM!",
+                     font=ctk.CTkFont(size=10), text_color="#EF4444").pack(anchor="w", pady=(4, 0))
+
+        # ===== Section 9: Настройки самодиагностики (EEPROM!) =====
+        sdiag_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        sdiag_sec.pack(fill="x", padx=12, pady=(8, 6))
+        self._pt_section_label(sdiag_sec, "Настройки самодиагностики  ⚠ EEPROM")
+
+        # Pan selfdiag
+        psd_row = ctk.CTkFrame(sdiag_sec, fg_color="#262626", corner_radius=8)
+        psd_row.pack(fill="x", pady=2)
+        ctk.CTkLabel(psd_row, text="Pan:", font=lbl_style, text_color="#9CA3AF").pack(side="left", padx=(10, 4), pady=6)
+        self.pt_sdiag_pan_auto = ctk.CTkCheckBox(
+            psd_row, text="Авто", width=60,
+            font=lbl_style, fg_color="#3B82F6", hover_color="#2563EB")
+        self.pt_sdiag_pan_auto.pack(side="left", padx=(0, 4), pady=6)
+        ctk.CTkLabel(psd_row, text="Скор:", font=lbl_style, text_color="#9CA3AF").pack(side="left", padx=(0, 2), pady=6)
+        self.pt_sdiag_pan_speed = self._pt_entry(psd_row, width=55, placeholder="1.0")
+        self.pt_sdiag_pan_speed.pack(side="left", padx=(0, 4), pady=6)
+        self._pt_action_btn(psd_row, "◀", self._pt_read_sdiag_pan, width=32, color="#555", hover="#666").pack(side="left", padx=(0, 2), pady=6)
+        self._pt_action_btn(psd_row, "✓", self._pt_set_sdiag_pan, width=32).pack(side="left", padx=(0, 8), pady=6)
+
+        # Tilt selfdiag
+        tsd_row = ctk.CTkFrame(sdiag_sec, fg_color="#262626", corner_radius=8)
+        tsd_row.pack(fill="x", pady=2)
+        ctk.CTkLabel(tsd_row, text="Tilt:", font=lbl_style, text_color="#9CA3AF").pack(side="left", padx=(10, 4), pady=6)
+        self.pt_sdiag_tilt_auto = ctk.CTkCheckBox(
+            tsd_row, text="Авто", width=60,
+            font=lbl_style, fg_color="#3B82F6", hover_color="#2563EB")
+        self.pt_sdiag_tilt_auto.pack(side="left", padx=(0, 4), pady=6)
+        ctk.CTkLabel(tsd_row, text="Скор:", font=lbl_style, text_color="#9CA3AF").pack(side="left", padx=(0, 2), pady=6)
+        self.pt_sdiag_tilt_speed = self._pt_entry(tsd_row, width=55, placeholder="1.0")
+        self.pt_sdiag_tilt_speed.pack(side="left", padx=(0, 4), pady=6)
+        self._pt_action_btn(tsd_row, "◀", self._pt_read_sdiag_tilt, width=32, color="#555", hover="#666").pack(side="left", padx=(0, 2), pady=6)
+        self._pt_action_btn(tsd_row, "✓", self._pt_set_sdiag_tilt, width=32).pack(side="left", padx=(0, 8), pady=6)
+
+        ctk.CTkLabel(sdiag_sec, text="⚠ Запись в EEPROM!",
+                     font=ctk.CTkFont(size=10), text_color="#EF4444").pack(anchor="w", pady=(4, 0))
+
+        # ===== Section 10: Настройки Pelco-D (EEPROM!) =====
+        pd_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        pd_sec.pack(fill="x", padx=12, pady=(8, 6))
+        self._pt_section_label(pd_sec, "Настройки Pelco-D  ⚠ EEPROM")
+
+        pd_card = ctk.CTkFrame(pd_sec, fg_color="#262626", corner_radius=8)
+        pd_card.pack(fill="x", pady=2)
+
+        pd_inner = ctk.CTkFrame(pd_card, fg_color="transparent")
+        pd_inner.pack(fill="x", padx=10, pady=8)
+
+        ctk.CTkLabel(pd_inner, text="Порт:", font=lbl_style, text_color="#9CA3AF").pack(side="left", padx=(0, 3))
+        self.pt_pd_port = self._pt_entry(pd_inner, width=60, placeholder="9761")
+        self.pt_pd_port.pack(side="left", padx=(0, 6))
+        ctk.CTkLabel(pd_inner, text="Адр:", font=lbl_style, text_color="#9CA3AF").pack(side="left", padx=(0, 3))
+        self.pt_pd_addr = self._pt_entry(pd_inner, width=45, placeholder="1")
+        self.pt_pd_addr.pack(side="left", padx=(0, 6))
+        self.pt_pd_tilt_inv = ctk.CTkCheckBox(
+            pd_inner, text="Инв. Tilt", width=80,
+            font=lbl_style, fg_color="#3B82F6", hover_color="#2563EB")
+        self.pt_pd_tilt_inv.pack(side="left", padx=(0, 4))
+
+        pd_btns = ctk.CTkFrame(pd_sec, fg_color="transparent")
+        pd_btns.pack(fill="x", pady=(4, 0))
+        self._pt_action_btn(pd_btns, "◀ Прочитать", self._pt_read_pelcod, width=100, color="#555", hover="#666").pack(side="left", padx=(0, 4))
+        self._pt_action_btn(pd_btns, "✓ Применить", self._pt_set_pelcod, width=100).pack(side="left")
+
+        ctk.CTkLabel(pd_sec, text="⚠ Запись в EEPROM!",
+                     font=ctk.CTkFont(size=10), text_color="#EF4444").pack(anchor="w", pady=(4, 0))
+
+        # ===== Section 11: Диагностика =====
+        diag_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        diag_sec.pack(fill="x", padx=12, pady=(8, 6))
+        self._pt_section_label(diag_sec, "Диагностика")
+
+        diag_card = ctk.CTkFrame(diag_sec, fg_color="#262626", corner_radius=8)
+        diag_card.pack(fill="x", pady=2)
+
+        self.pt_pan_busy_label = ctk.CTkLabel(diag_card, text="Pan занятость: --",
+                                               font=lbl_style, text_color="#E5E7EB")
+        self.pt_pan_busy_label.pack(anchor="w", padx=10, pady=(8, 2))
+
+        self.pt_tilt_busy_label = ctk.CTkLabel(diag_card, text="Tilt занятость: --",
+                                                font=lbl_style, text_color="#E5E7EB")
+        self.pt_tilt_busy_label.pack(anchor="w", padx=10, pady=(0, 2))
+
+        self.pt_pan_err_label = ctk.CTkLabel(diag_card, text="Pan ошибки: --",
+                                              font=lbl_style, text_color="#E5E7EB")
+        self.pt_pan_err_label.pack(anchor="w", padx=10, pady=(0, 2))
+
+        self.pt_tilt_err_label = ctk.CTkLabel(diag_card, text="Tilt ошибки: --",
+                                               font=lbl_style, text_color="#E5E7EB")
+        self.pt_tilt_err_label.pack(anchor="w", padx=10, pady=(0, 8))
+
+        diag_btns = ctk.CTkFrame(diag_sec, fg_color="transparent")
+        diag_btns.pack(fill="x", pady=(4, 0))
+        self._pt_action_btn(diag_btns, "Прочитать всё", self._pt_read_diagnostics, width=120).pack(side="left")
+
+        # ===== Section 12: Управление устройством =====
+        mgmt_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        mgmt_sec.pack(fill="x", padx=12, pady=(8, 12))
+        self._pt_section_label(mgmt_sec, "Управление устройством")
+
+        reset_row = ctk.CTkFrame(mgmt_sec, fg_color="#262626", corner_radius=8)
+        reset_row.pack(fill="x", pady=2)
+
+        reset_inner = ctk.CTkFrame(reset_row, fg_color="transparent")
+        reset_inner.pack(fill="x", padx=10, pady=8)
+
+        self._pt_action_btn(reset_inner, "Сброс Pan", self._pt_reset_pan, width=80, color="#E67E22", hover="#D35400").pack(side="left", padx=(0, 4))
+        self._pt_action_btn(reset_inner, "Сброс Tilt", self._pt_reset_tilt, width=80, color="#E67E22", hover="#D35400").pack(side="left", padx=(0, 4))
+        self._pt_action_btn(reset_inner, "Сброс Pelco-D", self._pt_reset_pelcod, width=90, color="#E67E22", hover="#D35400").pack(side="left", padx=(0, 4))
+        self._pt_action_btn(reset_inner, "Сброс всех", self._pt_reset_all, width=80, color="#EF4444", hover="#DC2626").pack(side="left")
+
+        reboot_card = ctk.CTkFrame(mgmt_sec, fg_color="#262626", corner_radius=8)
+        reboot_card.pack(fill="x", pady=(6, 2))
+        self._pt_action_btn(reboot_card, "⏻  Перезагрузка устройства", self._pt_reboot,
+                            width=200, color="#DC2626", hover="#B91C1C").pack(padx=10, pady=10)
+
+    # --------------------------------------------------------
+    # Pan-Tilt настройки: обработчики новых секций
+    # --------------------------------------------------------
+    def _pt_read_device_info(self):
+        def _run():
+            fw = self.pan_tilt.get_firmware_type()
+            ver = self.pan_tilt.get_firmware_version()
+            pwr = self.pan_tilt.get_power_info()
+            def _update():
+                if fw:
+                    raw = fw.strip("$#")
+                    self.pt_firmware_label.configure(text=f"Прошивка: {raw}")
+                if ver:
+                    raw = ver.strip("$#")
+                    try:
+                        v = int(raw) / 100.0
+                        self.pt_fw_version_label.configure(text=f"Версия: {v:.2f}")
+                    except ValueError:
+                        self.pt_fw_version_label.configure(text=f"Версия: {raw}")
+                if pwr:
+                    parts = pwr.strip("$#").split(",")
+                    if len(parts) >= 3:
+                        self.pt_power_label.configure(text=f"Ток: {parts[1]}  Мощность: {parts[2]}")
+                    else:
+                        self.pt_power_label.configure(text=f"Питание: {pwr}")
+            self.after(0, _update)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _pt_read_ctrl_pan(self):
+        def _run():
+            r = self.pan_tilt.get_control_mode_pan()
+            if r:
+                parts = r.strip("$#").split(",")
+                if len(parts) >= 3:
+                    mode = int(parts[1])
+                    prec = int(parts[2])
+                    def _update():
+                        self.pt_ctrl_pan_mode.set("Синхрон" if mode == 1 else "Стандарт")
+                        if prec:
+                            self.pt_ctrl_pan_prec.select()
+                        else:
+                            self.pt_ctrl_pan_prec.deselect()
+                    self.after(0, _update)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _pt_set_ctrl_pan(self):
+        def _run():
+            mode = 1 if self.pt_ctrl_pan_mode.get() == "Синхрон" else 0
+            prec = 1 if self.pt_ctrl_pan_prec.get() else 0
+            self.pan_tilt.set_control_mode_pan(mode, prec)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _pt_read_ctrl_tilt(self):
+        def _run():
+            r = self.pan_tilt.get_control_mode_tilt()
+            if r:
+                parts = r.strip("$#").split(",")
+                if len(parts) >= 3:
+                    mode = int(parts[1])
+                    prec = int(parts[2])
+                    def _update():
+                        self.pt_ctrl_tilt_mode.set("Синхрон" if mode == 1 else "Стандарт")
+                        if prec:
+                            self.pt_ctrl_tilt_prec.select()
+                        else:
+                            self.pt_ctrl_tilt_prec.deselect()
+                    self.after(0, _update)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _pt_set_ctrl_tilt(self):
+        def _run():
+            mode = 1 if self.pt_ctrl_tilt_mode.get() == "Синхрон" else 0
+            prec = 1 if self.pt_ctrl_tilt_prec.get() else 0
+            self.pan_tilt.set_control_mode_tilt(mode, prec)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _pt_read_sdiag_pan(self):
+        def _run():
+            r = self.pan_tilt.get_selfdiag_settings_pan()
+            if r:
+                parts = r.strip("$#").split(",")
+                if len(parts) >= 3:
+                    auto = int(parts[1])
+                    speed = parts[2]
+                    def _update():
+                        if auto:
+                            self.pt_sdiag_pan_auto.select()
+                        else:
+                            self.pt_sdiag_pan_auto.deselect()
+                        self.pt_sdiag_pan_speed.delete(0, "end")
+                        self.pt_sdiag_pan_speed.insert(0, speed)
+                    self.after(0, _update)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _pt_set_sdiag_pan(self):
+        def _run():
+            try:
+                auto = 1 if self.pt_sdiag_pan_auto.get() else 0
+                speed = float(self.pt_sdiag_pan_speed.get())
+                self.pan_tilt.set_selfdiag_settings_pan(auto, speed)
+            except ValueError:
+                pass
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _pt_read_sdiag_tilt(self):
+        def _run():
+            r = self.pan_tilt.get_selfdiag_settings_tilt()
+            if r:
+                parts = r.strip("$#").split(",")
+                if len(parts) >= 3:
+                    auto = int(parts[1])
+                    speed = parts[2]
+                    def _update():
+                        if auto:
+                            self.pt_sdiag_tilt_auto.select()
+                        else:
+                            self.pt_sdiag_tilt_auto.deselect()
+                        self.pt_sdiag_tilt_speed.delete(0, "end")
+                        self.pt_sdiag_tilt_speed.insert(0, speed)
+                    self.after(0, _update)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _pt_set_sdiag_tilt(self):
+        def _run():
+            try:
+                auto = 1 if self.pt_sdiag_tilt_auto.get() else 0
+                speed = float(self.pt_sdiag_tilt_speed.get())
+                self.pan_tilt.set_selfdiag_settings_tilt(auto, speed)
+            except ValueError:
+                pass
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _pt_read_pelcod(self):
+        def _run():
+            r = self.pan_tilt.get_pelcod_settings()
+            if r:
+                parts = r.strip("$#").split(",")
+                if len(parts) >= 4:
+                    port = parts[1]
+                    addr = parts[2]
+                    tilt_inv = int(parts[3])
+                    def _update():
+                        self.pt_pd_port.delete(0, "end")
+                        self.pt_pd_port.insert(0, port)
+                        self.pt_pd_addr.delete(0, "end")
+                        self.pt_pd_addr.insert(0, addr)
+                        if tilt_inv:
+                            self.pt_pd_tilt_inv.select()
+                        else:
+                            self.pt_pd_tilt_inv.deselect()
+                    self.after(0, _update)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _pt_set_pelcod(self):
+        def _run():
+            try:
+                port = int(self.pt_pd_port.get())
+                addr = int(self.pt_pd_addr.get())
+                tilt_inv = 1 if self.pt_pd_tilt_inv.get() else 0
+                self.pan_tilt.set_pelcod_settings(port, addr, tilt_inv)
+            except ValueError:
+                pass
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _pt_read_diagnostics(self):
+        busy_map = {"0": "Бездействие", "1": "Удержание", "2": "Остановка",
+                    "3": "Разгон", "4": "Торможение", "5": "Движение"}
+        def _run():
+            pb = self.pan_tilt.get_pan_busy()
+            tb = self.pan_tilt.get_tilt_busy()
+            pe = self.pan_tilt.get_pan_errors()
+            te = self.pan_tilt.get_tilt_errors()
+            def _update():
+                if pb:
+                    val = pb.strip("$#").split(",")
+                    code = val[1] if len(val) >= 2 else "?"
+                    self.pt_pan_busy_label.configure(
+                        text=f"Pan занятость: {busy_map.get(code, code)}")
+                if tb:
+                    val = tb.strip("$#").split(",")
+                    code = val[1] if len(val) >= 2 else "?"
+                    self.pt_tilt_busy_label.configure(
+                        text=f"Tilt занятость: {busy_map.get(code, code)}")
+                if pe:
+                    self.pt_pan_err_label.configure(text=f"Pan ошибки: {pe}")
+                if te:
+                    self.pt_tilt_err_label.configure(text=f"Tilt ошибки: {te}")
+            self.after(0, _update)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _pt_reset_pan(self):
+        from tkinter import messagebox
+        if messagebox.askyesno("Сброс Pan", "Выполнить сброс модуля Pan?"):
+            threading.Thread(target=self.pan_tilt.reset_module, args=(1,), daemon=True).start()
+
+    def _pt_reset_tilt(self):
+        from tkinter import messagebox
+        if messagebox.askyesno("Сброс Tilt", "Выполнить сброс модуля Tilt?"):
+            threading.Thread(target=self.pan_tilt.reset_module, args=(2,), daemon=True).start()
+
+    def _pt_reset_pelcod(self):
+        from tkinter import messagebox
+        if messagebox.askyesno("Сброс Pelco-D", "Выполнить сброс модуля Pelco-D?"):
+            threading.Thread(target=self.pan_tilt.reset_module, args=(3,), daemon=True).start()
+
+    def _pt_reset_all(self):
+        from tkinter import messagebox
+        if messagebox.askyesno("Сброс всех", "Выполнить сброс всех модулей?"):
+            def _run():
+                self.pan_tilt.reset_module(1)
+                self.pan_tilt.reset_module(2)
+                self.pan_tilt.reset_module(3)
+            threading.Thread(target=_run, daemon=True).start()
+
+    def _pt_reboot(self):
+        from tkinter import messagebox
+        if messagebox.askyesno("Перезагрузка", "Выполнить перезагрузку устройства?"):
+            threading.Thread(target=self.pan_tilt.reboot_device, daemon=True).start()
 
     # --------------------------------------------------------
     # Pan-Tilt settings handlers
