@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>ОПУ Управление</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #111;
+  color: #e5e7eb;
+  display: flex; flex-direction: column; align-items: center;
+  min-height: 100vh; padding: 16px;
+  -webkit-user-select: none; user-select: none;
+  touch-action: manipulation;
+}
+h1 {
+  font-size: 18px; margin-bottom: 8px; color: #fff;
+  letter-spacing: 0.5px;
+}
+
+/* Compact status indicator */
+.status {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; margin-bottom: 16px;
+  background: #1e1e1e; border-radius: 20px;
+  padding: 6px 14px;
+  border: 1px solid #2a2a2a;
+}
+.status .dot {
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; margin-right: 4px;
+  box-shadow: 0 0 6px currentColor;
+}
+.dot.on { background: #22c55e; color: #22c55e; }
+.dot.off { background: #ef4444; color: #ef4444; }
+
+.dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  max-width: 280px; width: 100%;
+  margin-bottom: 24px;
+}
+.dpad button {
+  width: 100%; aspect-ratio: 1;
+  min-height: 70px;
+  border: none; border-radius: 16px;
+  font-size: 28px;
+  background: linear-gradient(145deg, #333, #252525);
+  box-shadow: 3px 3px 8px rgba(0,0,0,0.5), -1px -1px 4px rgba(255,255,255,0.04);
+  color: #e5e7eb;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s, box-shadow 0.12s, transform 0.08s;
+}
+.dpad button:active {
+  background: linear-gradient(145deg, #3b82f6, #2563eb);
+  box-shadow: 0 0 16px rgba(59,130,246,0.45), inset 0 1px 2px rgba(255,255,255,0.1);
+  transform: scale(0.95);
+}
+.dpad .stop-btn {
+  background: linear-gradient(145deg, #c0392b, #a93226);
+  font-size: 14px; font-weight: bold;
+  box-shadow: 3px 3px 8px rgba(0,0,0,0.5), -1px -1px 4px rgba(255,255,255,0.04);
+}
+.dpad .stop-btn:active {
+  background: linear-gradient(145deg, #e74c3c, #c0392b);
+  box-shadow: 0 0 16px rgba(231,76,60,0.5), inset 0 1px 2px rgba(255,255,255,0.1);
+  transform: scale(0.95);
+}
+
+.sliders { width: 100%; max-width: 280px; }
+.slider-group { margin-bottom: 16px; }
+.slider-group label {
+  display: flex; justify-content: space-between;
+  font-size: 13px; color: #9ca3af; margin-bottom: 4px;
+}
+.slider-group input[type=range] {
+  width: 100%; height: 32px;
+  -webkit-appearance: none; appearance: none;
+  background: transparent;
+}
+.slider-group input[type=range]::-webkit-slider-track {
+  height: 6px; background: #374151; border-radius: 3px;
+}
+.slider-group input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: #3b82f6; margin-top: -9px; cursor: pointer;
+  box-shadow: 0 0 8px rgba(59,130,246,0.4);
+}
+.relay-section {
+  width: 100%; max-width: 280px;
+  margin-top: 24px;
+}
+.relay-section h2 {
+  font-size: 14px; color: #9ca3af;
+  letter-spacing: 1px; margin-bottom: 10px;
+  text-transform: uppercase;
+}
+.relay-row {
+  display: flex; gap: 8px;
+}
+.relay-btn {
+  flex: 1;
+  min-height: 70px;
+  border: 1px solid #3a3a3a;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #333, #252525);
+  box-shadow: 3px 3px 8px rgba(0,0,0,0.5), -1px -1px 4px rgba(255,255,255,0.04);
+  color: #e5e7eb;
+  cursor: pointer;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 4px;
+  font-size: 12px; font-weight: 600;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.08s, border-color 0.15s;
+}
+.relay-btn .ch-name { font-size: 11px; color: #9ca3af; }
+.relay-btn .ch-state { font-size: 13px; font-weight: bold; }
+.relay-btn.on {
+  background: linear-gradient(145deg, #22c55e, #16a34a);
+  border-color: #22c55e;
+  box-shadow: 0 0 14px rgba(34,197,94,0.4), inset 0 1px 2px rgba(255,255,255,0.1);
+}
+.relay-btn.on .ch-name { color: rgba(255,255,255,0.8); }
+.relay-btn.on .ch-state { color: #fff; }
+.relay-btn:active {
+  transform: scale(0.95);
+}
+</style>
+</head>
+<body>
+
+<h1>ОПУ Управление</h1>
+<div class="status">
+  <span class="dot off" id="dot"></span><span id="status-text">Отключён</span>
+</div>
+
+<div class="dpad">
+  <button data-cmd="diag_up_left">◤</button>
+  <button data-cmd="tilt_up">▲</button>
+  <button data-cmd="diag_up_right">◥</button>
+  <button data-cmd="pan_left">◀</button>
+  <button class="stop-btn" data-cmd="stop">STOP</button>
+  <button data-cmd="pan_right">▶</button>
+  <button data-cmd="diag_down_left">◣</button>
+  <button data-cmd="tilt_down">▼</button>
+  <button data-cmd="diag_down_right">◢</button>
+</div>
+
+<div class="sliders">
+  <div class="slider-group">
+    <label><span>Pan скорость</span><span id="pan-val">30 °/с</span></label>
+    <input type="range" id="pan-speed" min="5" max="300" value="30">
+  </div>
+  <div class="slider-group">
+    <label><span>Tilt скорость</span><span id="tilt-val">30 °/с</span></label>
+    <input type="range" id="tilt-speed" min="5" max="180" value="30">
+  </div>
+</div>
+
+<div class="relay-section">
+  <h2>РЕЛЕ</h2>
+  <div class="relay-row" id="relay-row"></div>
+</div>
+
+<script>
+const dot = document.getElementById('dot');
+const statusText = document.getElementById('status-text');
+const panSlider = document.getElementById('pan-speed');
+const tiltSlider = document.getElementById('tilt-speed');
+const panVal = document.getElementById('pan-val');
+const tiltVal = document.getElementById('tilt-val');
+
+const relayStates = {};
+
+function toggleRelay(ch) {
+  send({cmd: 'relay_toggle', channel: ch});
+}
+
+function buildRelayButtons(visible, names, states) {
+  const row = document.getElementById('relay-row');
+  row.innerHTML = '';
+  if (!visible || visible.length === 0) return;
+  for (const ch of visible) {
+    const chStr = String(ch);
+    const on = states[chStr] === true;
+    const btn = document.createElement('button');
+    btn.className = 'relay-btn' + (on ? ' on' : '');
+    btn.id = 'relay-' + ch;
+    btn.onclick = () => toggleRelay(ch);
+    btn.innerHTML = '<span class="ch-name">' + (names[chStr] || ('Канал ' + ch)) + '</span>' +
+                    '<span class="ch-state">' + (on ? '● ВКЛ' : '○ ВЫКЛ') + '</span>';
+    row.appendChild(btn);
+    relayStates[chStr] = on;
+  }
+}
+
+function updateRelayUI(states, visible, names) {
+  if (visible !== undefined) {
+    buildRelayButtons(visible, names || {}, states);
+  } else {
+    // Fallback: update existing buttons by state only
+    for (const [ch, on] of Object.entries(states)) {
+      relayStates[ch] = on;
+      const btn = document.getElementById('relay-' + ch);
+      if (!btn) continue;
+      const stateEl = btn.querySelector('.ch-state');
+      if (on) {
+        btn.classList.add('on');
+        stateEl.textContent = '● ВКЛ';
+      } else {
+        btn.classList.remove('on');
+        stateEl.textContent = '○ ВЫКЛ';
+      }
+    }
+  }
+}
+
+panSlider.addEventListener('input', () => { panVal.textContent = panSlider.value + ' °/с'; });
+tiltSlider.addEventListener('input', () => { tiltVal.textContent = tiltSlider.value + ' °/с'; });
+
+let ws = null;
+let reconnectTimer = null;
+
+function connect() {
+  const host = window.location.hostname;
+  ws = new WebSocket('ws://' + host + ':8765');
+  ws.onopen = () => {
+    dot.classList.remove('off'); dot.classList.add('on');
+    statusText.textContent = 'Подключён';
+  };
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'relay_state') updateRelayUI(msg.states, msg.visible, msg.names);
+    } catch(e) {}
+  };
+  ws.onclose = () => {
+    dot.classList.remove('on'); dot.classList.add('off');
+    statusText.textContent = 'Отключён';
+    reconnectTimer = setTimeout(connect, 2000);
+  };
+  ws.onerror = () => { ws.close(); };
+}
+connect();
+
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+function getCmd(btn) {
+  const cmd = btn.dataset.cmd;
+  const ps = parseInt(panSlider.value);
+  const ts = parseInt(tiltSlider.value);
+  if (cmd === 'stop') return {cmd: 'stop'};
+  if (cmd === 'pan_left' || cmd === 'pan_right') return {cmd, speed: ps};
+  if (cmd === 'tilt_up' || cmd === 'tilt_down') return {cmd, speed: ts};
+  return {cmd, pan_speed: ps, tilt_speed: ts};
+}
+
+document.querySelectorAll('.dpad button').forEach(btn => {
+  const start = () => { send(getCmd(btn)); };
+  const stop = () => { if (btn.dataset.cmd !== 'stop') send({cmd: 'stop'}); };
+
+  btn.addEventListener('mousedown', start);
+  btn.addEventListener('mouseup', stop);
+  btn.addEventListener('mouseleave', stop);
+  btn.addEventListener('touchstart', (e) => { e.preventDefault(); start(); });
+  btn.addEventListener('touchend', (e) => { e.preventDefault(); stop(); });
+  btn.addEventListener('touchcancel', (e) => { e.preventDefault(); stop(); });
+});
+</script>
+</body>
+</html>

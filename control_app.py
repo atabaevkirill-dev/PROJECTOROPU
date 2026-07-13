@@ -9,6 +9,12 @@ import threading
 import time
 import json
 import os
+import asyncio
+import functools
+import qrcode
+import websockets.asyncio.server
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from PIL import Image, ImageTk
 import customtkinter as ctk
 
 # ============================================================
@@ -21,6 +27,9 @@ RELAY_PORT = 9761
 SOCKET_TIMEOUT = 2  # секунды
 POLL_INTERVAL_MS = 500  # интервал опроса позиций в мс
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+WS_PORT = 8765
+HTTP_PORT = 8080
 
 # ============================================================
 # Настройки внешнего вида
@@ -469,6 +478,15 @@ class ControlApp(ctk.CTk):
         self._poll_positions()
         self._poll_relay_status()
 
+        # --- WebSocket + HTTP серверы ---
+        self._ws_clients: set = set()
+        self._ws_stop_event = threading.Event()
+        self._ws_thread = threading.Thread(target=self._run_ws_server, daemon=True)
+        self._ws_thread.start()
+        self._http_server = None
+        self._http_thread = threading.Thread(target=self._run_http_server, daemon=True)
+        self._http_thread.start()
+
         # --- Обработка закрытия окна ---
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -494,24 +512,31 @@ class ControlApp(ctk.CTk):
         )
         self.conn_gear_btn.pack(side="right")
 
-        # Status indicators
+        self.qr_btn = ctk.CTkButton(
+            hdr, text="📱 QR", width=36, height=28,
+            font=ctk.CTkFont(size=12),
+            fg_color="transparent", hover_color="#3A3A3A",
+            command=self._show_qr_popup
+        )
+        self.qr_btn.pack(side="right", padx=(0, 4))
+
+        # Status indicators (compact inline)
         indicators = ctk.CTkFrame(self.conn_frame, fg_color="transparent")
         indicators.pack(padx=10, pady=(5, 8), fill="x")
-        indicators.columnconfigure((0, 1), weight=1)
 
         self.pt_status_label = ctk.CTkLabel(
-            indicators, text="● ОПУ отключён",
+            indicators, text="● ОПУ",
             font=ctk.CTkFont(size=12),
             text_color=COLOR_DISCONNECTED
         )
-        self.pt_status_label.grid(row=0, column=0, sticky="w", padx=5)
+        self.pt_status_label.pack(side="left", padx=(5, 15))
 
         self.rl_status_label = ctk.CTkLabel(
-            indicators, text="● RelayX3: отключён",
+            indicators, text="● RelayX3",
             font=ctk.CTkFont(size=12),
             text_color=COLOR_DISCONNECTED
         )
-        self.rl_status_label.grid(row=0, column=1, sticky="w", padx=5)
+        self.rl_status_label.pack(side="left", padx=5)
 
         # Settings section (hidden)
         self.conn_settings_visible = False
@@ -634,52 +659,52 @@ class ControlApp(ctk.CTk):
         self.pt_dpad_frame.pack(pady=5)
         dpad = self.pt_dpad_frame
 
+        # Общие стили кнопок
+        _btn = {"width": 70, "height": 70, "corner_radius": 12,
+                "fg_color": "#2B2B2B", "hover_color": "#3B82F6",
+                "border_width": 1, "border_color": "#4A4A4A"}
+        _gap = {"padx": 3, "pady": 3}
+
         # Диагональные кнопки
-        btn_ul = ctk.CTkButton(dpad, text="◤", width=50, height=45,
-                               font=ctk.CTkFont(size=18),
-                               command=lambda: None)
-        btn_ul.grid(row=0, column=0, padx=2, pady=2)
+        btn_ul = ctk.CTkButton(dpad, text="◤", font=ctk.CTkFont(size=22),
+                               command=lambda: None, **_btn)
+        btn_ul.grid(row=0, column=0, **_gap)
 
-        btn_up = ctk.CTkButton(dpad, text="▲", width=60, height=45,
-                               font=ctk.CTkFont(size=22),
-                               command=lambda: None)
-        btn_up.grid(row=0, column=1, padx=2, pady=2)
+        btn_up = ctk.CTkButton(dpad, text="▲", font=ctk.CTkFont(size=26),
+                               command=lambda: None, **_btn)
+        btn_up.grid(row=0, column=1, **_gap)
 
-        btn_ur = ctk.CTkButton(dpad, text="◥", width=50, height=45,
-                               font=ctk.CTkFont(size=18),
-                               command=lambda: None)
-        btn_ur.grid(row=0, column=2, padx=2, pady=2)
+        btn_ur = ctk.CTkButton(dpad, text="◥", font=ctk.CTkFont(size=22),
+                               command=lambda: None, **_btn)
+        btn_ur.grid(row=0, column=2, **_gap)
 
-        btn_left = ctk.CTkButton(dpad, text="◀", width=50, height=45,
-                                 font=ctk.CTkFont(size=22),
-                                 command=lambda: None)
-        btn_left.grid(row=1, column=0, padx=2, pady=2)
+        btn_left = ctk.CTkButton(dpad, text="◀", font=ctk.CTkFont(size=26),
+                                 command=lambda: None, **_btn)
+        btn_left.grid(row=1, column=0, **_gap)
 
-        btn_stop = ctk.CTkButton(dpad, text="STOP", width=60, height=45,
-                                 font=ctk.CTkFont(size=12, weight="bold"),
+        btn_stop = ctk.CTkButton(dpad, text="STOP", width=70, height=70,
+                                 font=ctk.CTkFont(size=13, weight="bold"),
+                                 corner_radius=12,
                                  fg_color="#C0392B", hover_color="#E74C3C",
+                                 border_width=1, border_color="#E74C3C",
                                  command=self._stop_all)
-        btn_stop.grid(row=1, column=1, padx=2, pady=2)
+        btn_stop.grid(row=1, column=1, **_gap)
 
-        btn_right = ctk.CTkButton(dpad, text="▶", width=50, height=45,
-                                  font=ctk.CTkFont(size=22),
-                                  command=lambda: None)
-        btn_right.grid(row=1, column=2, padx=2, pady=2)
+        btn_right = ctk.CTkButton(dpad, text="▶", font=ctk.CTkFont(size=26),
+                                  command=lambda: None, **_btn)
+        btn_right.grid(row=1, column=2, **_gap)
 
-        btn_dl = ctk.CTkButton(dpad, text="◣", width=50, height=45,
-                               font=ctk.CTkFont(size=18),
-                               command=lambda: None)
-        btn_dl.grid(row=2, column=0, padx=2, pady=2)
+        btn_dl = ctk.CTkButton(dpad, text="◣", font=ctk.CTkFont(size=22),
+                               command=lambda: None, **_btn)
+        btn_dl.grid(row=2, column=0, **_gap)
 
-        btn_down = ctk.CTkButton(dpad, text="▼", width=60, height=45,
-                                 font=ctk.CTkFont(size=22),
-                                 command=lambda: None)
-        btn_down.grid(row=2, column=1, padx=2, pady=2)
+        btn_down = ctk.CTkButton(dpad, text="▼", font=ctk.CTkFont(size=26),
+                                 command=lambda: None, **_btn)
+        btn_down.grid(row=2, column=1, **_gap)
 
-        btn_dr = ctk.CTkButton(dpad, text="◢", width=50, height=45,
-                               font=ctk.CTkFont(size=18),
-                               command=lambda: None)
-        btn_dr.grid(row=2, column=2, padx=2, pady=2)
+        btn_dr = ctk.CTkButton(dpad, text="◢", font=ctk.CTkFont(size=22),
+                               command=lambda: None, **_btn)
+        btn_dr.grid(row=2, column=2, **_gap)
 
         # Привязки: кардинальные направления
         btn_up.bind("<ButtonPress-1>", lambda e: self._tilt_up_start())
@@ -704,20 +729,46 @@ class ControlApp(ctk.CTk):
         speed_frame = ctk.CTkFrame(self.pt_frame, fg_color="transparent")
         speed_frame.pack(pady=(10, 0), fill="x", padx=20)
 
-        self.speed_label = ctk.CTkLabel(speed_frame, text="Скорость: 30 °/сек",
-                                        font=ctk.CTkFont(size=12))
-        self.speed_label.pack()
+        # --- Pan speed ---
+        saved_pan = self._settings.get("pan_speed",
+                                       self._settings.get("speed", 30))
+        self.pan_speed_label = ctk.CTkLabel(
+            speed_frame, text=f"Pan: {saved_pan} °/сек",
+            font=ctk.CTkFont(size=12))
+        self.pan_speed_label.pack()
 
-        self.speed_slider = ctk.CTkSlider(
-            speed_frame, from_=5, to=100, number_of_steps=95,
-            command=self._on_speed_change
+        self.pan_speed_slider = ctk.CTkSlider(
+            speed_frame, from_=5, to=300, number_of_steps=295,
+            command=self._on_pan_speed_change
         )
-        self.speed_slider.set(30)
-        self.speed_slider.pack(fill="x", pady=(2, 8))
+        self.pan_speed_slider.set(saved_pan)
+        self.pan_speed_slider.pack(fill="x", pady=(2, 6))
 
-        saved_speed = self._settings.get("speed", 30)
-        self.speed_slider.set(saved_speed)
-        self.speed_label.configure(text=f"Скорость: {saved_speed} °/сек")
+        # --- Tilt speed ---
+        saved_tilt = self._settings.get("tilt_speed",
+                                        self._settings.get("speed", 30))
+        self.tilt_speed_label = ctk.CTkLabel(
+            speed_frame, text=f"Tilt: {saved_tilt} °/сек",
+            font=ctk.CTkFont(size=12))
+        self.tilt_speed_label.pack()
+
+        self.tilt_speed_slider = ctk.CTkSlider(
+            speed_frame, from_=5, to=180, number_of_steps=175,
+            command=self._on_tilt_speed_change
+        )
+        self.tilt_speed_slider.set(saved_tilt)
+        self.tilt_speed_slider.pack(fill="x", pady=(2, 4))
+
+        # --- Tilt inversion ---
+        self.tilt_invert_var = ctk.BooleanVar(
+            value=self._settings.get("tilt_invert", False))
+        self.tilt_invert_cb = ctk.CTkCheckBox(
+            speed_frame, text="Инверсия Tilt",
+            variable=self.tilt_invert_var,
+            font=ctk.CTkFont(size=12),
+            fg_color="#3B82F6", hover_color="#2563EB"
+        )
+        self.tilt_invert_cb.pack(pady=(0, 8))
 
         pos_frame = ctk.CTkFrame(self.pt_frame, fg_color="transparent")
         pos_frame.pack(pady=(0, 10), fill="x", padx=20)
@@ -1003,11 +1054,12 @@ class ControlApp(ctk.CTk):
         self._update_relay_button(ch_num)
 
     def _get_visible_channels(self) -> list[int]:
-        """Return list of visible channels."""
+        """Return list of channels visible on desktop (channels_visible checkboxes)."""
         return [ch for ch, var in self.channel_checkboxes.items() if var.get()]
 
     def _on_channel_visibility_changed(self):
-        """Called when a channel checkbox is toggled in settings."""
+        """Called when a channel checkbox is toggled in settings.
+        Controls both desktop button visibility and mobile relay list."""
         # Stop all active timers for safety
         for ch in list(self.timer_stop_flags.keys()):
             self.timer_stop_flags[ch].set()
@@ -1694,7 +1746,7 @@ class ControlApp(ctk.CTk):
         def _run():
             try:
                 pos = float(self.pt_goto_pan_entry.get())
-                spd = self._get_speed()
+                spd = self._get_pan_speed()
                 self.pan_tilt.go_to_pan(pos, spd)
             except ValueError:
                 pass
@@ -1704,7 +1756,7 @@ class ControlApp(ctk.CTk):
         def _run():
             try:
                 pos = float(self.pt_goto_tilt_entry.get())
-                spd = self._get_speed()
+                spd = self._get_tilt_speed()
                 self.pan_tilt.go_to_tilt(pos, spd)
             except ValueError:
                 pass
@@ -1879,8 +1931,9 @@ class ControlApp(ctk.CTk):
         def _run():
             try:
                 pid = int(self.pt_preset_id.get())
-                spd = self._get_speed()
-                self.pan_tilt.go_to_preset(pid, spd, spd)
+                ps = self._get_pan_speed()
+                ts = self._get_tilt_speed()
+                self.pan_tilt.go_to_preset(pid, ps, ts)
             except ValueError:
                 pass
         threading.Thread(target=_run, daemon=True).start()
@@ -2098,27 +2151,44 @@ class ControlApp(ctk.CTk):
     # --------------------------------------------------------
     # Обработчики кнопок D-pad (непрерывное движение)
     # --------------------------------------------------------
-    def _get_speed(self) -> int:
-        return int(self.speed_slider.get())
+    def _get_pan_speed(self) -> int:
+        return int(self.pan_speed_slider.get())
+
+    def _get_tilt_speed(self) -> int:
+        speed = int(self.tilt_speed_slider.get())
+        return -speed if self.tilt_invert_var.get() else speed
 
     def _pan_left_start(self):
         threading.Thread(target=self.pan_tilt.pan_left,
-                         args=(self._get_speed(),), daemon=True).start()
+                         args=(self._get_pan_speed(),), daemon=True).start()
 
     def _pan_right_start(self):
         threading.Thread(target=self.pan_tilt.pan_right,
-                         args=(self._get_speed(),), daemon=True).start()
+                         args=(self._get_pan_speed(),), daemon=True).start()
 
     def _pan_stop(self):
         threading.Thread(target=self.pan_tilt.stop_pan, daemon=True).start()
 
     def _tilt_up_start(self):
-        threading.Thread(target=self.pan_tilt.tilt_up,
-                         args=(self._get_speed(),), daemon=True).start()
+        # With inversion, up button should move down
+        raw = int(self.tilt_speed_slider.get())
+        if self.tilt_invert_var.get():
+            threading.Thread(target=self.pan_tilt.tilt_down,
+                             args=(raw,), daemon=True).start()
+        else:
+            threading.Thread(target=self.pan_tilt.tilt_up,
+                             args=(raw,), daemon=True).start()
 
     def _tilt_down_start(self):
-        threading.Thread(target=self.pan_tilt.tilt_down,
-                         args=(self._get_speed(),), daemon=True).start()
+        # tilt_down() sends $v,-{speed}#, so with inversion we want
+        # the opposite direction = tilt_up instead
+        raw = int(self.tilt_speed_slider.get())
+        if self.tilt_invert_var.get():
+            threading.Thread(target=self.pan_tilt.tilt_up,
+                             args=(raw,), daemon=True).start()
+        else:
+            threading.Thread(target=self.pan_tilt.tilt_down,
+                             args=(raw,), daemon=True).start()
 
     def _tilt_stop(self):
         threading.Thread(target=self.pan_tilt.stop_tilt, daemon=True).start()
@@ -2127,27 +2197,47 @@ class ControlApp(ctk.CTk):
         threading.Thread(target=self.pan_tilt.stop_all, daemon=True).start()
 
     def _diag_up_left_start(self):
-        s = self._get_speed()
-        threading.Thread(target=lambda: (self.pan_tilt.pan_left(s), self.pan_tilt.tilt_up(s)), daemon=True).start()
+        ps = self._get_pan_speed()
+        raw = int(self.tilt_speed_slider.get())
+        if self.tilt_invert_var.get():
+            threading.Thread(target=lambda: (self.pan_tilt.pan_left(ps), self.pan_tilt.tilt_down(raw)), daemon=True).start()
+        else:
+            threading.Thread(target=lambda: (self.pan_tilt.pan_left(ps), self.pan_tilt.tilt_up(raw)), daemon=True).start()
 
     def _diag_up_right_start(self):
-        s = self._get_speed()
-        threading.Thread(target=lambda: (self.pan_tilt.pan_right(s), self.pan_tilt.tilt_up(s)), daemon=True).start()
+        ps = self._get_pan_speed()
+        raw = int(self.tilt_speed_slider.get())
+        if self.tilt_invert_var.get():
+            threading.Thread(target=lambda: (self.pan_tilt.pan_right(ps), self.pan_tilt.tilt_down(raw)), daemon=True).start()
+        else:
+            threading.Thread(target=lambda: (self.pan_tilt.pan_right(ps), self.pan_tilt.tilt_up(raw)), daemon=True).start()
 
     def _diag_down_left_start(self):
-        s = self._get_speed()
-        threading.Thread(target=lambda: (self.pan_tilt.pan_left(s), self.pan_tilt.tilt_down(s)), daemon=True).start()
+        ps = self._get_pan_speed()
+        raw = int(self.tilt_speed_slider.get())
+        if self.tilt_invert_var.get():
+            threading.Thread(target=lambda: (self.pan_tilt.pan_left(ps), self.pan_tilt.tilt_up(raw)), daemon=True).start()
+        else:
+            threading.Thread(target=lambda: (self.pan_tilt.pan_left(ps), self.pan_tilt.tilt_down(raw)), daemon=True).start()
 
     def _diag_down_right_start(self):
-        s = self._get_speed()
-        threading.Thread(target=lambda: (self.pan_tilt.pan_right(s), self.pan_tilt.tilt_down(s)), daemon=True).start()
+        ps = self._get_pan_speed()
+        raw = int(self.tilt_speed_slider.get())
+        if self.tilt_invert_var.get():
+            threading.Thread(target=lambda: (self.pan_tilt.pan_right(ps), self.pan_tilt.tilt_up(raw)), daemon=True).start()
+        else:
+            threading.Thread(target=lambda: (self.pan_tilt.pan_right(ps), self.pan_tilt.tilt_down(raw)), daemon=True).start()
 
     # --------------------------------------------------------
     # Обработчики UI
     # --------------------------------------------------------
-    def _on_speed_change(self, value):
+    def _on_pan_speed_change(self, value):
         speed = int(value)
-        self.speed_label.configure(text=f"Скорость: {speed} °/сек")
+        self.pan_speed_label.configure(text=f"Pan: {speed} °/сек")
+
+    def _on_tilt_speed_change(self, value):
+        speed = int(value)
+        self.tilt_speed_label.configure(text=f"Tilt: {speed} °/сек")
 
     def _toggle_relay_channel(self, ch: int):
         threading.Thread(target=self._do_toggle_relay, args=(ch,), daemon=True).start()
@@ -2201,24 +2291,24 @@ class ControlApp(ctk.CTk):
     def _update_pt_status(self):
         if self.pan_tilt.connected:
             self.pt_status_label.configure(
-                text=f"● ОПУ TL.0250: {PAN_TILT_HOST}:{PAN_TILT_PORT}",
+                text=f"● ОПУ {self.pan_tilt.host}:{self.pan_tilt.port}",
                 text_color=COLOR_CONNECTED
             )
         else:
             self.pt_status_label.configure(
-                text="● ОПУ TL.0250: отключён",
+                text="● ОПУ",
                 text_color=COLOR_DISCONNECTED
             )
 
     def _update_rl_status(self):
         if self.relay.connected:
             self.rl_status_label.configure(
-                text=f"● RelayX3: {RELAY_HOST}:{RELAY_PORT}",
+                text=f"● RelayX3 {self.relay.host}:{self.relay.port}",
                 text_color=COLOR_CONNECTED
             )
         else:
             self.rl_status_label.configure(
-                text="● RelayX3: отключён",
+                text="● RelayX3",
                 text_color=COLOR_DISCONNECTED
             )
 
@@ -2258,6 +2348,7 @@ class ControlApp(ctk.CTk):
         if status is not None:
             self.relay.channel_states = status
             self.after(0, self._sync_relay_buttons)
+            self._broadcast_relay_state()
 
     def _sync_relay_buttons(self):
         for ch in self.relay_buttons:
@@ -2296,7 +2387,9 @@ class ControlApp(ctk.CTk):
         data = {
             "channel_names": {str(k): v for k, v in self.channel_custom_names.items()},
             "channels_visible": {str(k): v.get() for k, v in self.channel_checkboxes.items()},
-            "speed": int(self.speed_slider.get()),
+            "pan_speed": int(self.pan_speed_slider.get()),
+            "tilt_speed": int(self.tilt_speed_slider.get()),
+            "tilt_invert": self.tilt_invert_var.get(),
             "timer_settings": timer_settings,
             "timer_mode": self.timer_mode.get(),
             "pt_host": self.pan_tilt.host,
@@ -2311,6 +2404,194 @@ class ControlApp(ctk.CTk):
             pass
 
     # --------------------------------------------------------
+    # WebSocket сервер
+    # --------------------------------------------------------
+    def _run_ws_server(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._ws_loop = loop
+        loop.run_until_complete(self._ws_main())
+
+    async def _ws_main(self):
+        async with websockets.asyncio.server.serve(
+            self._ws_handler, "0.0.0.0", WS_PORT
+        ):
+            # Run until stop event is set
+            while not self._ws_stop_event.is_set():
+                await asyncio.sleep(0.5)
+
+    def _get_visible_channels_info(self):
+        """Return visible channel list and names for WebSocket messages (mobile).
+        Uses the same channels_visible checkboxes as desktop."""
+        try:
+            visible = [ch for ch in RelayDevice.CHANNELS if self.channel_checkboxes.get(ch) and self.channel_checkboxes[ch].get()]
+            names = {str(ch): self.channel_custom_names.get(ch, f"Канал {ch}") for ch in visible}
+            return visible, names
+        except Exception:
+            return [], {}
+
+    async def _ws_handler(self, websocket):
+        self._ws_clients.add(websocket)
+        try:
+            # Send current relay state on connect
+            visible, names = self._get_visible_channels_info()
+            await websocket.send(json.dumps({
+                "type": "relay_state",
+                "states": {str(k): v for k, v in self.relay.channel_states.items()},
+                "visible": visible,
+                "names": names
+            }))
+            async for message in websocket:
+                try:
+                    data = json.loads(message)
+                except json.JSONDecodeError:
+                    continue
+                cmd = data.get("cmd", "")
+                if cmd == "relay_toggle":
+                    ch = int(data.get("channel", 1))
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, self.relay.toggle_channel, ch)
+                    # Sync desktop buttons
+                    self.after(0, self._sync_relay_buttons)
+                    # Send updated state back to all clients
+                    visible, names = self._get_visible_channels_info()
+                    state_msg = json.dumps({
+                        "type": "relay_state",
+                        "states": {str(k): v for k, v in self.relay.channel_states.items()},
+                        "visible": visible,
+                        "names": names
+                    })
+                    for ws in list(self._ws_clients):
+                        try:
+                            await ws.send(state_msg)
+                        except Exception:
+                            pass
+                elif cmd == "pan_left":
+                    speed = int(data.get("speed", 30))
+                    self.pan_tilt.pan_left(speed)
+                elif cmd == "pan_right":
+                    speed = int(data.get("speed", 30))
+                    self.pan_tilt.pan_right(speed)
+                elif cmd == "tilt_up":
+                    speed = int(data.get("speed", 30))
+                    if self.tilt_invert_var.get():
+                        self.pan_tilt.tilt_down(speed)
+                    else:
+                        self.pan_tilt.tilt_up(speed)
+                elif cmd == "tilt_down":
+                    speed = int(data.get("speed", 30))
+                    if self.tilt_invert_var.get():
+                        self.pan_tilt.tilt_up(speed)
+                    else:
+                        self.pan_tilt.tilt_down(speed)
+                elif cmd.startswith("diag_"):
+                    pan_speed = int(data.get("pan_speed", 30))
+                    tilt_speed = int(data.get("tilt_speed", 20))
+                    invert = self.tilt_invert_var.get()
+                    if cmd == "diag_up_left":
+                        self.pan_tilt.pan_left(pan_speed)
+                        if invert:
+                            self.pan_tilt.tilt_down(tilt_speed)
+                        else:
+                            self.pan_tilt.tilt_up(tilt_speed)
+                    elif cmd == "diag_up_right":
+                        self.pan_tilt.pan_right(pan_speed)
+                        if invert:
+                            self.pan_tilt.tilt_down(tilt_speed)
+                        else:
+                            self.pan_tilt.tilt_up(tilt_speed)
+                    elif cmd == "diag_down_left":
+                        self.pan_tilt.pan_left(pan_speed)
+                        if invert:
+                            self.pan_tilt.tilt_up(tilt_speed)
+                        else:
+                            self.pan_tilt.tilt_down(tilt_speed)
+                    elif cmd == "diag_down_right":
+                        self.pan_tilt.pan_right(pan_speed)
+                        if invert:
+                            self.pan_tilt.tilt_up(tilt_speed)
+                        else:
+                            self.pan_tilt.tilt_down(tilt_speed)
+                elif cmd == "stop":
+                    self.pan_tilt.stop_all()
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        finally:
+            self._ws_clients.discard(websocket)
+
+    def _broadcast_relay_state(self):
+        """Send relay state to all connected WS clients (thread-safe)."""
+        if not self._ws_clients:
+            return
+        visible, names = self._get_visible_channels_info()
+        state_msg = json.dumps({
+            "type": "relay_state",
+            "states": {str(k): v for k, v in self.relay.channel_states.items()},
+            "visible": visible,
+            "names": names
+        })
+        async def _send_all():
+            for ws in list(self._ws_clients):
+                try:
+                    await ws.send(state_msg)
+                except Exception:
+                    pass
+        if hasattr(self, '_ws_loop') and self._ws_loop.is_running():
+            asyncio.run_coroutine_threadsafe(_send_all(), self._ws_loop)
+
+    # --------------------------------------------------------
+    # HTTP сервер
+    # --------------------------------------------------------
+    def _run_http_server(self):
+        handler = functools.partial(SimpleHTTPRequestHandler, directory=WEB_DIR)
+        try:
+            self._http_server = HTTPServer(("0.0.0.0", HTTP_PORT), handler)
+            self._http_server.serve_forever()
+        except Exception:
+            pass
+
+    # --------------------------------------------------------
+    # QR код
+    # --------------------------------------------------------
+    def _get_local_ip(self):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            try:
+                return socket.gethostbyname(socket.gethostname())
+            except Exception:
+                return "127.0.0.1"
+
+    def _show_qr_popup(self):
+        local_ip = self._get_local_ip()
+        url = f"http://{local_ip}:{HTTP_PORT}"
+
+        qr = qrcode.QRCode(box_size=10, border=2)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white").resize((250, 250))
+
+        popup = ctk.CTkToplevel(self)
+        popup.title("QR — мобильное управление")
+        popup.geometry("300x320")
+        popup.resizable(False, False)
+        popup.configure(fg_color="#FFFFFF")
+
+        photo = ImageTk.PhotoImage(img)
+        label = ctk.CTkLabel(popup, image=photo, text="")
+        label.image = photo  # prevent GC
+        label.pack(pady=(15, 5))
+
+        url_label = ctk.CTkLabel(popup, text=url,
+                                  font=ctk.CTkFont(size=12),
+                                  text_color="#333333")
+        url_label.pack(pady=(0, 10))
+
+    # --------------------------------------------------------
     # Закрытие приложения
     # --------------------------------------------------------
     def _on_close(self):
@@ -2321,6 +2602,10 @@ class ControlApp(ctk.CTk):
         self._save_settings()
         self.pan_tilt.disconnect()
         self.relay.disconnect()
+        # Остановить серверы
+        self._ws_stop_event.set()
+        if self._http_server:
+            self._http_server.shutdown()
         self.destroy()
 
 
