@@ -9,7 +9,7 @@
     "2": false,
     "3": false
   },
-  "speed": 44,
+  "speed": 12,
   "timer_settings": {
     "1": {
       "hours": 0,
@@ -18,5 +18,9 @@
       "cycles": 1
     }
   },
-  "timer_mode": "sequential"
+  "timer_mode": "sequential",
+  "pt_host": "192.168.11.30",
+  "pt_port": 9760,
+  "rl_host": "192.168.1.114",
+  "rl_port": 9761
 }

@@ -14,8 +14,8 @@ import customtkinter as ctk
 # ============================================================
 # Настройки подключения
 # ============================================================
-PAN_TILT_HOST = "192.168.1.115"
-PAN_TILT_PORT = 9762
+PAN_TILT_HOST = "192.168.11.30"
+PAN_TILT_PORT = 9760
 RELAY_HOST = "192.168.1.114"
 RELAY_PORT = 9761
 SOCKET_TIMEOUT = 2  # секунды
@@ -25,7 +25,7 @@ SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settin
 # ============================================================
 # Настройки внешнего вида
 # ============================================================
-WINDOW_WIDTH = 400
+WINDOW_WIDTH = 450
 WINDOW_HEIGHT = 650
 COLOR_CONNECTED = "#2CC985"
 COLOR_DISCONNECTED = "#E74C3C"
@@ -403,8 +403,12 @@ class ControlApp(ctk.CTk):
         self.timer_mode = ctk.StringVar(value=self._settings.get("timer_mode", "parallel"))
 
         # --- Создание объектов устройств ---
-        self.pan_tilt = PanTiltDevice(PAN_TILT_HOST, PAN_TILT_PORT)
-        self.relay = RelayDevice(RELAY_HOST, RELAY_PORT)
+        pt_host = self._settings.get("pt_host", PAN_TILT_HOST)
+        pt_port = self._settings.get("pt_port", PAN_TILT_PORT)
+        rl_host = self._settings.get("rl_host", RELAY_HOST)
+        rl_port = self._settings.get("rl_port", RELAY_PORT)
+        self.pan_tilt = PanTiltDevice(pt_host, pt_port)
+        self.relay = RelayDevice(rl_host, rl_port)
 
         # --- Построение интерфейса ---
         self._build_connection_panel()
@@ -425,14 +429,27 @@ class ControlApp(ctk.CTk):
     # Панель статусов подключения
     # --------------------------------------------------------
     def _build_connection_panel(self):
-        frame = ctk.CTkFrame(self, corner_radius=10)
-        frame.pack(padx=15, pady=(15, 5), fill="x")
+        self.conn_frame = ctk.CTkFrame(self, corner_radius=10)
+        self.conn_frame.pack(padx=15, pady=(15, 5), fill="x")
 
-        ctk.CTkLabel(frame, text="Статус подключения",
-                     font=ctk.CTkFont(size=13, weight="bold")).pack(pady=(8, 5))
+        # Header with title + gear
+        hdr = ctk.CTkFrame(self.conn_frame, fg_color="transparent")
+        hdr.pack(fill="x", padx=10, pady=(8, 0))
 
-        indicators = ctk.CTkFrame(frame, fg_color="transparent")
-        indicators.pack(padx=10, pady=(0, 10), fill="x")
+        ctk.CTkLabel(hdr, text="Статус подключения",
+                     font=ctk.CTkFont(size=13, weight="bold")).pack(side="left")
+
+        self.conn_gear_btn = ctk.CTkButton(
+            hdr, text="⚙", width=28, height=28,
+            font=ctk.CTkFont(size=14),
+            fg_color="transparent", hover_color="#3A3A3A",
+            command=self._toggle_conn_settings
+        )
+        self.conn_gear_btn.pack(side="right")
+
+        # Status indicators
+        indicators = ctk.CTkFrame(self.conn_frame, fg_color="transparent")
+        indicators.pack(padx=10, pady=(5, 8), fill="x")
         indicators.columnconfigure((0, 1), weight=1)
 
         self.pt_status_label = ctk.CTkLabel(
@@ -448,6 +465,85 @@ class ControlApp(ctk.CTk):
             text_color=COLOR_DISCONNECTED
         )
         self.rl_status_label.grid(row=0, column=1, sticky="w", padx=5)
+
+        # Settings section (hidden)
+        self.conn_settings_visible = False
+        self.conn_settings_frame = ctk.CTkFrame(self.conn_frame, fg_color="#1F1F1F", corner_radius=8)
+
+        self._build_conn_settings()
+
+    def _build_conn_settings(self):
+        """Build IP/port entries in the connection settings frame."""
+        f = self.conn_settings_frame
+        for w in f.winfo_children():
+            w.destroy()
+
+        lbl_font = ctk.CTkFont(size=11)
+        entry_style = {"height": 28, "font": ctk.CTkFont(size=11), "corner_radius": 6,
+                       "fg_color": "#1A1A1A", "border_color": "#3A3A3A"}
+
+        # OPU row
+        r1 = ctk.CTkFrame(f, fg_color="transparent")
+        r1.pack(fill="x", padx=10, pady=(10, 4))
+        ctk.CTkLabel(r1, text="ОПУ IP:", font=lbl_font, text_color="#9CA3AF").pack(side="left", padx=(0, 4))
+        self.conn_pt_ip = ctk.CTkEntry(r1, width=130, **entry_style)
+        self.conn_pt_ip.insert(0, self.pan_tilt.host)
+        self.conn_pt_ip.pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(r1, text="Порт:", font=lbl_font, text_color="#9CA3AF").pack(side="left", padx=(0, 4))
+        self.conn_pt_port = ctk.CTkEntry(r1, width=60, **entry_style)
+        self.conn_pt_port.insert(0, str(self.pan_tilt.port))
+        self.conn_pt_port.pack(side="left")
+
+        # Relay row
+        r2 = ctk.CTkFrame(f, fg_color="transparent")
+        r2.pack(fill="x", padx=10, pady=(4, 4))
+        ctk.CTkLabel(r2, text="Реле IP:", font=lbl_font, text_color="#9CA3AF").pack(side="left", padx=(0, 4))
+        self.conn_rl_ip = ctk.CTkEntry(r2, width=130, **entry_style)
+        self.conn_rl_ip.insert(0, self.relay.host)
+        self.conn_rl_ip.pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(r2, text="Порт:", font=lbl_font, text_color="#9CA3AF").pack(side="left", padx=(0, 4))
+        self.conn_rl_port = ctk.CTkEntry(r2, width=60, **entry_style)
+        self.conn_rl_port.insert(0, str(self.relay.port))
+        self.conn_rl_port.pack(side="left")
+
+        # Apply button
+        btn_row = ctk.CTkFrame(f, fg_color="transparent")
+        btn_row.pack(fill="x", padx=10, pady=(6, 10))
+        ctk.CTkButton(
+            btn_row, text="Применить", width=100, height=28,
+            font=ctk.CTkFont(size=11), corner_radius=6,
+            fg_color="#3B82F6", hover_color="#2563EB",
+            command=self._apply_conn_settings
+        ).pack(side="left")
+
+    def _toggle_conn_settings(self):
+        if self.conn_settings_visible:
+            self.conn_settings_frame.pack_forget()
+            self.conn_settings_visible = False
+        else:
+            self.conn_settings_frame.pack(fill="x", padx=10, pady=(0, 8))
+            self.conn_settings_visible = True
+        self.after(50, self._fit_window_height)
+
+    def _apply_conn_settings(self):
+        """Apply new IP/port, reconnect devices."""
+        new_pt_ip = self.conn_pt_ip.get().strip()
+        new_pt_port = int(self.conn_pt_port.get().strip() or 9760)
+        new_rl_ip = self.conn_rl_ip.get().strip()
+        new_rl_port = int(self.conn_rl_port.get().strip() or 9761)
+
+        # Disconnect and update
+        self.pan_tilt.disconnect()
+        self.pan_tilt.host = new_pt_ip
+        self.pan_tilt.port = new_pt_port
+
+        self.relay.disconnect()
+        self.relay.host = new_rl_ip
+        self.relay.port = new_rl_port
+
+        # Update status
+        self.after(0, self._update_pt_status)
+        self.after(0, self._update_rl_status)
 
     # --------------------------------------------------------
     # Панель управления Pan-Tilt
@@ -1754,6 +1850,10 @@ class ControlApp(ctk.CTk):
             "speed": int(self.speed_slider.get()),
             "timer_settings": timer_settings,
             "timer_mode": self.timer_mode.get(),
+            "pt_host": self.pan_tilt.host,
+            "pt_port": self.pan_tilt.port,
+            "rl_host": self.relay.host,
+            "rl_port": self.relay.port,
         }
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
