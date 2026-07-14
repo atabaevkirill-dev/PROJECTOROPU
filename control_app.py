@@ -9,6 +9,7 @@ import threading
 import time
 import json
 import os
+import sys
 import asyncio
 import functools
 import qrcode
@@ -26,8 +27,17 @@ RELAY_HOST = "192.168.1.114"
 RELAY_PORT = 9761
 SOCKET_TIMEOUT = 2  # секунды
 POLL_INTERVAL_MS = 500  # интервал опроса позиций в мс
-SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
-WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+
+# PyInstaller bundle support
+if getattr(sys, 'frozen', False):
+    _BASE_DIR = os.path.dirname(sys.executable)
+    _BUNDLE_DIR = sys._MEIPASS
+else:
+    _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    _BUNDLE_DIR = _BASE_DIR
+
+SETTINGS_FILE = os.path.join(_BASE_DIR, "settings.json")
+WEB_DIR = os.path.join(_BUNDLE_DIR, "web")
 WS_PORT = 8765
 HTTP_PORT = 8080
 
@@ -1530,21 +1540,34 @@ class ControlApp(ctk.CTk):
             pwr = self.pan_tilt.get_power_info()
             def _update():
                 if fw:
+                    # $IT# → type = "T"
                     raw = fw.strip("$#")
+                    if raw.startswith("I"):
+                        raw = raw[1:]  # remove command letter
                     self.pt_firmware_label.configure(text=f"Прошивка: {raw}")
+                else:
+                    self.pt_firmware_label.configure(text="Прошивка: нет ответа")
                 if ver:
+                    # $V0074# → version hex after 'V'
                     raw = ver.strip("$#")
+                    if raw.startswith("V"):
+                        raw = raw[1:]
                     try:
-                        v = int(raw) / 100.0
+                        v = int(raw, 16) / 100.0
                         self.pt_fw_version_label.configure(text=f"Версия: {v:.2f}")
                     except ValueError:
                         self.pt_fw_version_label.configure(text=f"Версия: {raw}")
+                else:
+                    self.pt_fw_version_label.configure(text="Версия: нет ответа")
                 if pwr:
+                    # $D,current,power#
                     parts = pwr.strip("$#").split(",")
                     if len(parts) >= 3:
-                        self.pt_power_label.configure(text=f"Ток: {parts[1]}  Мощность: {parts[2]}")
+                        self.pt_power_label.configure(text=f"Ток: {parts[1]}A  Мощность: {parts[2]}W")
                     else:
                         self.pt_power_label.configure(text=f"Питание: {pwr}")
+                else:
+                    self.pt_power_label.configure(text="Ток/Мощность: нет ответа")
             self.after(0, _update)
         threading.Thread(target=_run, daemon=True).start()
 
@@ -1697,16 +1720,28 @@ class ControlApp(ctk.CTk):
                     val = pb.strip("$#").split(",")
                     code = val[1] if len(val) >= 2 else "?"
                     self.pt_pan_busy_label.configure(
-                        text=f"Pan занятость: {busy_map.get(code, code)}")
+                        text=f"Pan: {busy_map.get(code, code)}")
+                else:
+                    self.pt_pan_busy_label.configure(text="Pan занятость: нет ответа")
                 if tb:
                     val = tb.strip("$#").split(",")
                     code = val[1] if len(val) >= 2 else "?"
                     self.pt_tilt_busy_label.configure(
-                        text=f"Tilt занятость: {busy_map.get(code, code)}")
+                        text=f"Tilt: {busy_map.get(code, code)}")
+                else:
+                    self.pt_tilt_busy_label.configure(text="Tilt занятость: нет ответа")
                 if pe:
-                    self.pt_pan_err_label.configure(text=f"Pan ошибки: {pe}")
+                    val = pe.strip("$#").split(",")
+                    err = val[1] if len(val) >= 2 else pe
+                    self.pt_pan_err_label.configure(text=f"Pan ошибки: {err}")
+                else:
+                    self.pt_pan_err_label.configure(text="Pan ошибки: нет ответа")
                 if te:
-                    self.pt_tilt_err_label.configure(text=f"Tilt ошибки: {te}")
+                    val = te.strip("$#").split(",")
+                    err = val[1] if len(val) >= 2 else te
+                    self.pt_tilt_err_label.configure(text=f"Tilt ошибки: {err}")
+                else:
+                    self.pt_tilt_err_label.configure(text="Tilt ошибки: нет ответа")
             self.after(0, _update)
         threading.Thread(target=_run, daemon=True).start()
 
@@ -1890,25 +1925,37 @@ class ControlApp(ctk.CTk):
 
             def _update():
                 if temp:
+                    # $0,temp1,,temp2# or $0,temp1,temp2,temp3,temp4#
                     parts = temp.strip("$#").split(",")
                     if len(parts) >= 4:
                         self.pt_temp_label.configure(
                             text=f"Температура: {parts[1]}°C / {parts[3]}°C")
+                    elif len(parts) >= 2:
+                        self.pt_temp_label.configure(
+                            text=f"Температура: {parts[1]}°C")
+                else:
+                    self.pt_temp_label.configure(text="Температура: нет ответа")
                 if volt:
                     parts = volt.strip("$#").split(",")
                     if len(parts) >= 2:
                         self.pt_volt_label.configure(
                             text=f"Напряжение: {parts[1]} В")
+                else:
+                    self.pt_volt_label.configure(text="Напряжение: нет ответа")
                 if ps:
                     val = ps.strip("$#").split(",")
                     st = val[1] if len(val) >= 2 else "?"
                     self.pt_pstate_label.configure(
                         text=f"Pan: {state_map.get(st, st)}")
+                else:
+                    self.pt_pstate_label.configure(text="Pan: нет ответа")
                 if ts:
                     val = ts.strip("$#").split(",")
                     st = val[1] if len(val) >= 2 else "?"
                     self.pt_tstate_label.configure(
                         text=f"Tilt: {state_map.get(st, st)}")
+                else:
+                    self.pt_tstate_label.configure(text="Tilt: нет ответа")
             self.after(0, _update)
         threading.Thread(target=_run, daemon=True).start()
 
@@ -2602,11 +2649,13 @@ class ControlApp(ctk.CTk):
         self._save_settings()
         self.pan_tilt.disconnect()
         self.relay.disconnect()
-        # Остановить серверы
+        # Остановить серверы в фоне чтобы не подвисать
         self._ws_stop_event.set()
         if self._http_server:
-            self._http_server.shutdown()
+            threading.Thread(target=self._http_server.shutdown, daemon=True).start()
         self.destroy()
+        # Принудительный выход чтобы не ждать daemon threads
+        os._exit(0)
 
 
 # ============================================================
