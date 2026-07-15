@@ -469,9 +469,13 @@ class ControlApp(ctk.CTk):
 
         # --- Настройка окна ---
         self.title("Контроллер Управления Прожектором")
-        self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
-        self.minsize(WINDOW_WIDTH, 500)
-        self.resizable(False, True)
+        # Адаптивный размер под монитор
+        screen_h = self.winfo_screenheight()
+        win_h = min(int(screen_h * 0.85), 900)
+        win_w = WINDOW_WIDTH
+        self.geometry(f"{win_w}x{win_h}")
+        self.minsize(win_w, 500)
+        self.resizable(True, True)
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
@@ -495,6 +499,13 @@ class ControlApp(ctk.CTk):
         self.relay = RelayDevice(rl_host, rl_port)
 
         # --- Построение интерфейса ---
+        # Главный скролл container
+        self._main_scroll = ctk.CTkScrollableFrame(
+            self, fg_color="transparent",
+            scrollbar_button_color="#2B2B2B",
+            scrollbar_button_hover_color="#3A3A3A"
+        )
+        self._main_scroll.pack(fill="both", expand=True)
         self._build_connection_panel()
         self._build_pantilt_panel()
         self._build_relay_panel()
@@ -522,7 +533,7 @@ class ControlApp(ctk.CTk):
     # Панель статусов подключения
     # --------------------------------------------------------
     def _build_connection_panel(self):
-        self.conn_frame = ctk.CTkFrame(self, corner_radius=10)
+        self.conn_frame = ctk.CTkFrame(self._main_scroll, corner_radius=10)
         self.conn_frame.pack(padx=15, pady=(15, 5), fill="x")
 
         # Header with title + gear
@@ -649,8 +660,8 @@ class ControlApp(ctk.CTk):
     # Панель управления Pan-Tilt
     # --------------------------------------------------------
     def _build_pantilt_panel(self):
-        self.pt_frame = ctk.CTkFrame(self, corner_radius=12, fg_color="#2B2B2B")
-        self.pt_frame.pack(padx=15, pady=5, fill="both", expand=True)
+        self.pt_frame = ctk.CTkFrame(self._main_scroll, corner_radius=12, fg_color="#2B2B2B")
+        self.pt_frame.pack(padx=15, pady=5, fill="x")
 
         # --- Header: title + gear button ---
         header = ctk.CTkFrame(self.pt_frame, fg_color="transparent")
@@ -815,7 +826,7 @@ class ControlApp(ctk.CTk):
     # Панель управления реле (современный UI)
     # --------------------------------------------------------
     def _build_relay_panel(self):
-        self.relay_frame = ctk.CTkFrame(self, corner_radius=12, fg_color="#2B2B2B")
+        self.relay_frame = ctk.CTkFrame(self._main_scroll, corner_radius=12, fg_color="#2B2B2B")
         self.relay_frame.pack(padx=15, pady=(5, 15), fill="x")
 
         # --- Header: "РЕЛЕ" + accent line + gear icon ---
@@ -1150,11 +1161,8 @@ class ControlApp(ctk.CTk):
         self.after(50, self._fit_window_height)
 
     def _fit_window_height(self):
-        """Fit window height to content."""
-        self.update_idletasks()
-        needed = self.winfo_reqheight()
-        current_w = self.winfo_width()
-        self.geometry(f"{current_w}x{needed}")
+        """No-op: main container is scrollable now."""
+        pass
 
     # --------------------------------------------------------
     # Pan-Tilt настройки: toggle / build
