@@ -102,16 +102,34 @@ class PanTiltDevice:
                 return False
 
     def send_and_read(self, command: str) -> str | None:
-        """Отправить команду и прочитать ответ (для запросов позиции/состояния)."""
+        """Отправить команду и прочитать ответ до символа '#'."""
         with self._lock:
             if not self.connected or not self.sock:
                 return None
             try:
+                # Flush any stale data in buffer
+                self.sock.setblocking(False)
+                try:
+                    while self.sock.recv(256):
+                        pass
+                except (BlockingIOError, OSError):
+                    pass
+                self.sock.setblocking(True)
+                self.sock.settimeout(SOCKET_TIMEOUT)
+                
                 self.sock.sendall(command.encode("utf-8"))
-                data = self.sock.recv(256)
-                if data:
-                    return data.decode("utf-8", errors="ignore").strip()
-                return None
+                # Read until '#' terminator
+                buf = b""
+                while True:
+                    chunk = self.sock.recv(1)
+                    if not chunk:
+                        return None
+                    buf += chunk
+                    if chunk == b"#":
+                        break
+                    if len(buf) > 512:
+                        break
+                return buf.decode("utf-8", errors="ignore").strip()
             except Exception:
                 self.connected = False
                 return None
@@ -2590,9 +2608,18 @@ class ControlApp(ctk.CTk):
     # HTTP сервер
     # --------------------------------------------------------
     def _run_http_server(self):
-        handler = functools.partial(SimpleHTTPRequestHandler, directory=WEB_DIR)
         try:
-            self._http_server = HTTPServer(("0.0.0.0", HTTP_PORT), handler)
+            if not os.path.isdir(WEB_DIR):
+                return
+
+            class Handler(SimpleHTTPRequestHandler):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, directory=WEB_DIR, **kwargs)
+                def log_message(self, format, *args):
+                    pass  # suppress logs
+
+            self._http_server = HTTPServer(("0.0.0.0", HTTP_PORT), Handler)
+            self._http_server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self._http_server.serve_forever()
         except Exception:
             pass
