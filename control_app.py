@@ -15,7 +15,7 @@ import functools
 import qrcode
 import websockets.asyncio.server
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from PIL import Image, ImageTk
+from PIL import Image
 import customtkinter as ctk
 
 # ============================================================
@@ -209,8 +209,9 @@ class PanTiltDevice:
         if resp:
             try:
                 parts = resp.strip("$#").split(",")
-                if len(parts) >= 3:
-                    return (float(parts[0]), float(parts[1]), float(parts[2]))
+                # Response: $l,min,max,acc# → parts[0]='l'
+                if len(parts) >= 4:
+                    return (float(parts[1]), float(parts[2]), float(parts[3]))
             except (ValueError, IndexError):
                 pass
         return None
@@ -220,8 +221,8 @@ class PanTiltDevice:
         if resp:
             try:
                 parts = resp.strip("$#").split(",")
-                if len(parts) >= 3:
-                    return (float(parts[0]), float(parts[1]), float(parts[2]))
+                if len(parts) >= 4:
+                    return (float(parts[1]), float(parts[2]), float(parts[3]))
             except (ValueError, IndexError):
                 pass
         return None
@@ -238,8 +239,9 @@ class PanTiltDevice:
         if resp:
             try:
                 parts = resp.strip("$#").split(",")
-                if len(parts) >= 3:
-                    return (int(parts[0]), float(parts[1]), float(parts[2]))
+                # Response: $m,enable,left,right#
+                if len(parts) >= 4:
+                    return (int(parts[1]), float(parts[2]), float(parts[3]))
             except (ValueError, IndexError):
                 pass
         return None
@@ -249,8 +251,8 @@ class PanTiltDevice:
         if resp:
             try:
                 parts = resp.strip("$#").split(",")
-                if len(parts) >= 3:
-                    return (int(parts[0]), float(parts[1]), float(parts[2]))
+                if len(parts) >= 4:
+                    return (int(parts[1]), float(parts[2]), float(parts[3]))
             except (ValueError, IndexError):
                 pass
         return None
@@ -1206,11 +1208,76 @@ class ControlApp(ctk.CTk):
         for w in self.pt_settings_frame.winfo_children():
             w.destroy()
 
-        lbl_style = ctk.CTkFont(size=11)
+        self._pt_lbl_style = ctk.CTkFont(size=11)
+        lbl_style = self._pt_lbl_style
 
-        # ===== Section: Positioning =====
+        # ===== Section 1: Информация и диагностика (объединённая) — FIRST! =====
+        unified_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        unified_sec.pack(fill="x", padx=12, pady=(12, 6))
+        self._pt_section_label(unified_sec, "Информация и диагностика")
+
+        unified_card = ctk.CTkFrame(unified_sec, fg_color="#262626", corner_radius=8)
+        unified_card.pack(fill="x", pady=2)
+
+        # Device info
+        self.pt_firmware_label = ctk.CTkLabel(unified_card, text="Прошивка: --",
+                                               font=lbl_style, text_color="#E5E7EB")
+        self.pt_firmware_label.pack(anchor="w", padx=10, pady=(8, 2))
+
+        self.pt_fw_version_label = ctk.CTkLabel(unified_card, text="Версия: --",
+                                                 font=lbl_style, text_color="#E5E7EB")
+        self.pt_fw_version_label.pack(anchor="w", padx=10, pady=(0, 2))
+
+        self.pt_power_label = ctk.CTkLabel(unified_card, text="Ток/Мощность: --",
+                                           font=lbl_style, text_color="#E5E7EB")
+        self.pt_power_label.pack(anchor="w", padx=10, pady=(0, 2))
+
+        # Device status
+        self.pt_temp_label = ctk.CTkLabel(unified_card, text="Температура: --",
+                                           font=lbl_style, text_color="#E5E7EB")
+        self.pt_temp_label.pack(anchor="w", padx=10, pady=(0, 2))
+
+        self.pt_volt_label = ctk.CTkLabel(unified_card, text="Напряжение: --",
+                                           font=lbl_style, text_color="#E5E7EB")
+        self.pt_volt_label.pack(anchor="w", padx=10, pady=(0, 2))
+
+        self.pt_pstate_label = ctk.CTkLabel(unified_card, text="Pan: --",
+                                             font=lbl_style, text_color="#E5E7EB")
+        self.pt_pstate_label.pack(anchor="w", padx=10, pady=(0, 2))
+
+        self.pt_tstate_label = ctk.CTkLabel(unified_card, text="Tilt: --",
+                                             font=lbl_style, text_color="#E5E7EB")
+        self.pt_tstate_label.pack(anchor="w", padx=10, pady=(0, 2))
+
+        # Diagnostics
+        self.pt_pan_busy_label = ctk.CTkLabel(unified_card, text="Pan занятость: --",
+                                               font=lbl_style, text_color="#E5E7EB")
+        self.pt_pan_busy_label.pack(anchor="w", padx=10, pady=(0, 2))
+
+        self.pt_tilt_busy_label = ctk.CTkLabel(unified_card, text="Tilt занятость: --",
+                                                font=lbl_style, text_color="#E5E7EB")
+        self.pt_tilt_busy_label.pack(anchor="w", padx=10, pady=(0, 2))
+
+        self.pt_pan_err_label = ctk.CTkLabel(unified_card, text="Pan ошибки: --",
+                                              font=lbl_style, text_color="#E5E7EB")
+        self.pt_pan_err_label.pack(anchor="w", padx=10, pady=(0, 2))
+
+        self.pt_tilt_err_label = ctk.CTkLabel(unified_card, text="Tilt ошибки: --",
+                                               font=lbl_style, text_color="#E5E7EB")
+        self.pt_tilt_err_label.pack(anchor="w", padx=10, pady=(0, 8))
+
+        unified_btns = ctk.CTkFrame(unified_sec, fg_color="transparent")
+        unified_btns.pack(fill="x", pady=(4, 0))
+        self._pt_action_btn(unified_btns, "Обновить", self._pt_read_all_info, width=100).pack(side="left", padx=(0, 6))
+        self._pt_action_btn(unified_btns, "Самодиаг. Pan", self._pt_selfdiag_pan, width=100, color="#E67E22", hover="#D35400").pack(side="left", padx=(0, 6))
+        self._pt_action_btn(unified_btns, "Самодиаг. Tilt", self._pt_selfdiag_tilt, width=100, color="#E67E22", hover="#D35400").pack(side="left")
+
+        # Auto-read on settings open
+        self._pt_read_all_info()
+
+        # ===== Section 2: Positioning =====
         pos_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
-        pos_sec.pack(fill="x", padx=12, pady=(12, 6))
+        pos_sec.pack(fill="x", padx=12, pady=(8, 6))
         self._pt_section_label(pos_sec, "Позиционирование")
 
         # Pan go-to
@@ -1229,7 +1296,7 @@ class ControlApp(ctk.CTk):
         self.pt_goto_tilt_entry.pack(side="left", padx=(0, 6), pady=6)
         self._pt_action_btn(tilt_row, "Перейти", self._pt_goto_tilt).pack(side="left", padx=(0, 10), pady=6)
 
-        # ===== Section: Swing =====
+        # ===== Section 3: Swing =====
         sw_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
         sw_sec.pack(fill="x", padx=12, pady=(8, 6))
         self._pt_section_label(sw_sec, "Качание")
@@ -1258,8 +1325,58 @@ class ControlApp(ctk.CTk):
         self.pt_swing_tilt_spd.pack(side="left", padx=(0, 4), pady=6)
         self._pt_action_btn(tsw_row, "Качать", self._pt_swing_tilt, width=65).pack(side="left", padx=(0, 8), pady=6)
 
+        # ===== Section 4: Presets =====
+        pre_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        pre_sec.pack(fill="x", padx=12, pady=(8, 6))
+        self._pt_section_label(pre_sec, "Пресеты Pelco-D")
+
+        pre_card = ctk.CTkFrame(pre_sec, fg_color="#262626", corner_radius=8)
+        pre_card.pack(fill="x", pady=2)
+
+        pre_inner = ctk.CTkFrame(pre_card, fg_color="transparent")
+        pre_inner.pack(fill="x", padx=10, pady=8)
+
+        ctk.CTkLabel(pre_inner, text="ID:", font=lbl_style, text_color="#9CA3AF").pack(side="left", padx=(0, 4))
+        self.pt_preset_id = self._pt_entry(pre_inner, width=45, placeholder="1-64")
+        self.pt_preset_id.pack(side="left", padx=(0, 8))
+
+        self._pt_action_btn(pre_inner, "Сохранить", self._pt_save_preset, width=80).pack(side="left", padx=(0, 4))
+        self._pt_action_btn(pre_inner, "Перейти", self._pt_goto_preset, width=70).pack(side="left", padx=(0, 4))
+        self._pt_action_btn(pre_inner, "Удалить", self._pt_delete_preset, width=65, color="#EF4444", hover="#DC2626").pack(side="left")
+
+        # ===== Password-protected advanced settings =====
+        self._pt_adv_pass_frame = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        self._pt_adv_pass_frame.pack(fill="x", padx=12, pady=(8, 6))
+
+        pass_row = ctk.CTkFrame(self._pt_adv_pass_frame, fg_color="#262626", corner_radius=8)
+        pass_row.pack(fill="x", pady=2)
+        ctk.CTkLabel(pass_row, text="🔒 Расширенные настройки", font=lbl_style, text_color="#9CA3AF").pack(side="left", padx=(10, 8), pady=6)
+        self._pt_adv_pass_entry = self._pt_entry(pass_row, width=60, placeholder="PIN")
+        self._pt_adv_pass_entry.configure(show="*")
+        self._pt_adv_pass_entry.pack(side="left", padx=(0, 6), pady=6)
+        self._pt_action_btn(pass_row, "Разблокировать", self._pt_unlock_advanced, width=110).pack(side="left", padx=(0, 10), pady=6)
+
+        # Advanced frame (hidden until password)
+        self._pt_advanced_frame = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        # Don't pack yet — will be packed in _pt_unlock_advanced
+
+    def _pt_unlock_advanced(self):
+        """Unlock advanced settings with password 1111."""
+        pwd = self._pt_adv_pass_entry.get()
+        if pwd == "1111":
+            self._pt_adv_pass_frame.pack_forget()
+            self._pt_advanced_frame.pack(fill="x", padx=0, pady=0)
+            self._pt_build_advanced_sections()
+        else:
+            self._pt_adv_pass_entry.configure(border_color="#EF4444")
+            self.after(1500, lambda: self._pt_adv_pass_entry.configure(border_color="#3A3A3A"))
+
+    def _pt_build_advanced_sections(self):
+        """Build all advanced (EEPROM) sections into the advanced frame."""
+        lbl_style = self._pt_lbl_style
+
         # ===== Section: Speed limits =====
-        spd_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        spd_sec = ctk.CTkFrame(self._pt_advanced_frame, fg_color="transparent")
         spd_sec.pack(fill="x", padx=12, pady=(8, 6))
         self._pt_section_label(spd_sec, "Ограничения скорости  ⚠ EEPROM")
 
@@ -1290,7 +1407,7 @@ class ControlApp(ctk.CTk):
         self._pt_action_btn(tspd_row, "✓", self._pt_set_speed_tilt, width=32).pack(side="left", padx=(0, 8), pady=6)
 
         # ===== Section: Angle limits =====
-        ang_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        ang_sec = ctk.CTkFrame(self._pt_advanced_frame, fg_color="transparent")
         ang_sec.pack(fill="x", padx=12, pady=(8, 6))
         self._pt_section_label(ang_sec, "Ограничения углов  ⚠ EEPROM")
 
@@ -1324,81 +1441,8 @@ class ControlApp(ctk.CTk):
         self._pt_action_btn(tang_row, "◀", self._pt_read_angle_tilt, width=32, color="#555", hover="#666").pack(side="left", padx=(0, 2), pady=6)
         self._pt_action_btn(tang_row, "✓", self._pt_set_angle_tilt, width=32).pack(side="left", padx=(0, 8), pady=6)
 
-        # ===== Section: Device status =====
-        stat_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
-        stat_sec.pack(fill="x", padx=12, pady=(8, 6))
-        self._pt_section_label(stat_sec, "Состояние устройства")
-
-        stat_card = ctk.CTkFrame(stat_sec, fg_color="#262626", corner_radius=8)
-        stat_card.pack(fill="x", pady=2)
-
-        self.pt_temp_label = ctk.CTkLabel(stat_card, text="Температура: --",
-                                           font=lbl_style, text_color="#E5E7EB")
-        self.pt_temp_label.pack(anchor="w", padx=10, pady=(8, 2))
-
-        self.pt_volt_label = ctk.CTkLabel(stat_card, text="Напряжение: --",
-                                           font=lbl_style, text_color="#E5E7EB")
-        self.pt_volt_label.pack(anchor="w", padx=10, pady=(0, 2))
-
-        self.pt_pstate_label = ctk.CTkLabel(stat_card, text="Pan: --",
-                                             font=lbl_style, text_color="#E5E7EB")
-        self.pt_pstate_label.pack(anchor="w", padx=10, pady=(0, 2))
-
-        self.pt_tstate_label = ctk.CTkLabel(stat_card, text="Tilt: --",
-                                             font=lbl_style, text_color="#E5E7EB")
-        self.pt_tstate_label.pack(anchor="w", padx=10, pady=(0, 8))
-
-        stat_btns = ctk.CTkFrame(stat_sec, fg_color="transparent")
-        stat_btns.pack(fill="x", pady=(4, 0))
-        self._pt_action_btn(stat_btns, "Прочитать всё", self._pt_read_status, width=120).pack(side="left", padx=(0, 6))
-        self._pt_action_btn(stat_btns, "Самодиаг. Pan", self._pt_selfdiag_pan, width=110, color="#E67E22", hover="#D35400").pack(side="left", padx=(0, 6))
-        self._pt_action_btn(stat_btns, "Самодиаг. Tilt", self._pt_selfdiag_tilt, width=110, color="#E67E22", hover="#D35400").pack(side="left")
-
-        # ===== Section: Presets =====
-        pre_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
-        pre_sec.pack(fill="x", padx=12, pady=(8, 12))
-        self._pt_section_label(pre_sec, "Пресеты Pelco-D")
-
-        pre_card = ctk.CTkFrame(pre_sec, fg_color="#262626", corner_radius=8)
-        pre_card.pack(fill="x", pady=2)
-
-        pre_inner = ctk.CTkFrame(pre_card, fg_color="transparent")
-        pre_inner.pack(fill="x", padx=10, pady=8)
-
-        ctk.CTkLabel(pre_inner, text="ID:", font=lbl_style, text_color="#9CA3AF").pack(side="left", padx=(0, 4))
-        self.pt_preset_id = self._pt_entry(pre_inner, width=45, placeholder="1-64")
-        self.pt_preset_id.pack(side="left", padx=(0, 8))
-
-        self._pt_action_btn(pre_inner, "Сохранить", self._pt_save_preset, width=80).pack(side="left", padx=(0, 4))
-        self._pt_action_btn(pre_inner, "Перейти", self._pt_goto_preset, width=70).pack(side="left", padx=(0, 4))
-        self._pt_action_btn(pre_inner, "Удалить", self._pt_delete_preset, width=65, color="#EF4444", hover="#DC2626").pack(side="left")
-
-        # ===== Section 7: Информация об устройстве =====
-        info_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
-        info_sec.pack(fill="x", padx=12, pady=(8, 6))
-        self._pt_section_label(info_sec, "Информация об устройстве")
-
-        info_card = ctk.CTkFrame(info_sec, fg_color="#262626", corner_radius=8)
-        info_card.pack(fill="x", pady=2)
-
-        self.pt_firmware_label = ctk.CTkLabel(info_card, text="Прошивка: --",
-                                               font=lbl_style, text_color="#E5E7EB")
-        self.pt_firmware_label.pack(anchor="w", padx=10, pady=(8, 2))
-
-        self.pt_fw_version_label = ctk.CTkLabel(info_card, text="Версия: --",
-                                                 font=lbl_style, text_color="#E5E7EB")
-        self.pt_fw_version_label.pack(anchor="w", padx=10, pady=(0, 2))
-
-        self.pt_power_label = ctk.CTkLabel(info_card, text="Ток/Мощность: --",
-                                           font=lbl_style, text_color="#E5E7EB")
-        self.pt_power_label.pack(anchor="w", padx=10, pady=(0, 8))
-
-        info_btns = ctk.CTkFrame(info_sec, fg_color="transparent")
-        info_btns.pack(fill="x", pady=(4, 0))
-        self._pt_action_btn(info_btns, "Прочитать всё", self._pt_read_device_info, width=120).pack(side="left")
-
-        # ===== Section 8: Режим управления (EEPROM!) =====
-        ctrl_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        # ===== Section: Режим управления (EEPROM!) =====
+        ctrl_sec = ctk.CTkFrame(self._pt_advanced_frame, fg_color="transparent")
         ctrl_sec.pack(fill="x", padx=12, pady=(8, 6))
         self._pt_section_label(ctrl_sec, "Режим управления  ⚠ EEPROM")
 
@@ -1441,8 +1485,8 @@ class ControlApp(ctk.CTk):
         ctk.CTkLabel(ctrl_sec, text="⚠ Запись в EEPROM!",
                      font=ctk.CTkFont(size=10), text_color="#EF4444").pack(anchor="w", pady=(4, 0))
 
-        # ===== Section 9: Настройки самодиагностики (EEPROM!) =====
-        sdiag_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        # ===== Section: Настройки самодиагностики (EEPROM!) =====
+        sdiag_sec = ctk.CTkFrame(self._pt_advanced_frame, fg_color="transparent")
         sdiag_sec.pack(fill="x", padx=12, pady=(8, 6))
         self._pt_section_label(sdiag_sec, "Настройки самодиагностики  ⚠ EEPROM")
 
@@ -1477,8 +1521,8 @@ class ControlApp(ctk.CTk):
         ctk.CTkLabel(sdiag_sec, text="⚠ Запись в EEPROM!",
                      font=ctk.CTkFont(size=10), text_color="#EF4444").pack(anchor="w", pady=(4, 0))
 
-        # ===== Section 10: Настройки Pelco-D (EEPROM!) =====
-        pd_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        # ===== Section: Настройки Pelco-D (EEPROM!) =====
+        pd_sec = ctk.CTkFrame(self._pt_advanced_frame, fg_color="transparent")
         pd_sec.pack(fill="x", padx=12, pady=(8, 6))
         self._pt_section_label(pd_sec, "Настройки Pelco-D  ⚠ EEPROM")
 
@@ -1507,36 +1551,8 @@ class ControlApp(ctk.CTk):
         ctk.CTkLabel(pd_sec, text="⚠ Запись в EEPROM!",
                      font=ctk.CTkFont(size=10), text_color="#EF4444").pack(anchor="w", pady=(4, 0))
 
-        # ===== Section 11: Диагностика =====
-        diag_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
-        diag_sec.pack(fill="x", padx=12, pady=(8, 6))
-        self._pt_section_label(diag_sec, "Диагностика")
-
-        diag_card = ctk.CTkFrame(diag_sec, fg_color="#262626", corner_radius=8)
-        diag_card.pack(fill="x", pady=2)
-
-        self.pt_pan_busy_label = ctk.CTkLabel(diag_card, text="Pan занятость: --",
-                                               font=lbl_style, text_color="#E5E7EB")
-        self.pt_pan_busy_label.pack(anchor="w", padx=10, pady=(8, 2))
-
-        self.pt_tilt_busy_label = ctk.CTkLabel(diag_card, text="Tilt занятость: --",
-                                                font=lbl_style, text_color="#E5E7EB")
-        self.pt_tilt_busy_label.pack(anchor="w", padx=10, pady=(0, 2))
-
-        self.pt_pan_err_label = ctk.CTkLabel(diag_card, text="Pan ошибки: --",
-                                              font=lbl_style, text_color="#E5E7EB")
-        self.pt_pan_err_label.pack(anchor="w", padx=10, pady=(0, 2))
-
-        self.pt_tilt_err_label = ctk.CTkLabel(diag_card, text="Tilt ошибки: --",
-                                               font=lbl_style, text_color="#E5E7EB")
-        self.pt_tilt_err_label.pack(anchor="w", padx=10, pady=(0, 8))
-
-        diag_btns = ctk.CTkFrame(diag_sec, fg_color="transparent")
-        diag_btns.pack(fill="x", pady=(4, 0))
-        self._pt_action_btn(diag_btns, "Прочитать всё", self._pt_read_diagnostics, width=120).pack(side="left")
-
-        # ===== Section 12: Управление устройством =====
-        mgmt_sec = ctk.CTkFrame(self.pt_settings_frame, fg_color="transparent")
+        # ===== Section: Управление устройством =====
+        mgmt_sec = ctk.CTkFrame(self._pt_advanced_frame, fg_color="transparent")
         mgmt_sec.pack(fill="x", padx=12, pady=(8, 12))
         self._pt_section_label(mgmt_sec, "Управление устройством")
 
@@ -1559,39 +1575,67 @@ class ControlApp(ctk.CTk):
     # --------------------------------------------------------
     # Pan-Tilt настройки: обработчики новых секций
     # --------------------------------------------------------
+    def _pt_read_all_info(self):
+        """Прочитать все: инфо, статус, диагностика."""
+        self._pt_read_device_info()
+        self._pt_read_status()
+        self._pt_read_diagnostics()
+
     def _pt_read_device_info(self):
         def _run():
             fw = self.pan_tilt.get_firmware_type()
             ver = self.pan_tilt.get_firmware_version()
             pwr = self.pan_tilt.get_power_info()
+            print(f"[PT_INFO] fw={fw!r}  ver={ver!r}  pwr={pwr!r}")
             def _update():
                 if fw:
-                    # $IT# → type = "T"
-                    raw = fw.strip("$#")
+                    # $IT# → strip frame, remove command letter 'I' → type is 'T'
+                    raw = fw.strip()
+                    if raw.startswith("$"):
+                        raw = raw[1:]
+                    if raw.endswith("#"):
+                        raw = raw[:-1]
                     if raw.startswith("I"):
-                        raw = raw[1:]  # remove command letter
-                    self.pt_firmware_label.configure(text=f"Прошивка: {raw}")
+                        raw = raw[1:]
+                    self.pt_firmware_label.configure(text=f"Прошивка: {raw}" if raw else "Прошивка: --")
                 else:
                     self.pt_firmware_label.configure(text="Прошивка: нет ответа")
                 if ver:
-                    # $V0074# → version hex after 'V'
-                    raw = ver.strip("$#")
-                    if raw.startswith("V"):
+                    raw = ver.strip()
+                    if raw.startswith("$"):
                         raw = raw[1:]
+                    if raw.endswith("#"):
+                        raw = raw[:-1]
+                    # Try to parse as version hex (V0074 → 1.16)
+                    vraw = raw
+                    if vraw.startswith("V") or vraw.startswith("v"):
+                        vraw = vraw[1:]
                     try:
-                        v = int(raw, 16) / 100.0
+                        v = int(vraw, 16) / 100.0
                         self.pt_fw_version_label.configure(text=f"Версия: {v:.2f}")
                     except ValueError:
                         self.pt_fw_version_label.configure(text=f"Версия: {raw}")
                 else:
                     self.pt_fw_version_label.configure(text="Версия: нет ответа")
                 if pwr:
-                    # $D,current,power#
-                    parts = pwr.strip("$#").split(",")
-                    if len(parts) >= 3:
-                        self.pt_power_label.configure(text=f"Ток: {parts[1]}A  Мощность: {parts[2]}W")
+                    raw = pwr.strip()
+                    if raw.startswith("$"):
+                        raw = raw[1:]
+                    if raw.endswith("#"):
+                        raw = raw[:-1]
+                    # $X# means command not supported
+                    if raw == "X" or not raw:
+                        self.pt_power_label.configure(text="Ток/Мощность: не поддерживается")
                     else:
-                        self.pt_power_label.configure(text=f"Питание: {pwr}")
+                        # Try parse D,current,power
+                        parts = raw.split(",")
+                        vals = [p for p in parts if p not in ("D", "")]
+                        if len(vals) >= 2:
+                            self.pt_power_label.configure(text=f"Ток: {vals[0]} A  Мощность: {vals[1]} W")
+                        elif len(vals) == 1:
+                            self.pt_power_label.configure(text=f"Ток: {vals[0]} A")
+                        else:
+                            self.pt_power_label.configure(text=f"Питание: {raw}")
                 else:
                     self.pt_power_label.configure(text="Ток/Мощность: нет ответа")
             self.after(0, _update)
@@ -2487,7 +2531,8 @@ class ControlApp(ctk.CTk):
 
     async def _ws_main(self):
         async with websockets.asyncio.server.serve(
-            self._ws_handler, "0.0.0.0", WS_PORT
+            self._ws_handler, "0.0.0.0", WS_PORT,
+            ping_interval=20, ping_timeout=60
         ):
             # Run until stop event is set
             while not self._ws_stop_event.is_set():
@@ -2663,9 +2708,9 @@ class ControlApp(ctk.CTk):
         popup.resizable(False, False)
         popup.configure(fg_color="#FFFFFF")
 
-        photo = ImageTk.PhotoImage(img)
-        label = ctk.CTkLabel(popup, image=photo, text="")
-        label.image = photo  # prevent GC
+        ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(250, 250))
+        label = ctk.CTkLabel(popup, image=ctk_img, text="")
+        label._ctk_img = ctk_img  # prevent GC
         label.pack(pady=(15, 5))
 
         url_label = ctk.CTkLabel(popup, text=url,
